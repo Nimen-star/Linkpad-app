@@ -1,0 +1,115 @@
+name: Build & Publish LinkPad Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.3.0)'
+        required: false
+        default: 'v1.3.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Build Android APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          mkdir -p dist-android
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+            export KEYSTORE_PATH="$PWD/my-upload-key.jks"
+            gradle :app:assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk dist-android/LinkPad-Android.apk
+          else
+            echo "::warning::KEYSTORE_BASE64, STORE_PASSWORD, or KEY_PASSWORD secret missing - falling back to debug-signed APK which triggers Google Play Protect warnings."
+            gradle :app:assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk dist-android/LinkPad-Android.apk
+          fi
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkpad-android-apk
+          path: dist-android/LinkPad-Android.apk
+
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore & Build LinkPadHost.exe (.NET 4.8)
+        run: |
+          msbuild pc-host\LinkPadHost.csproj /t:Restore,Build /p:Configuration=Release /v:minimal
+
+      - name: Install Inno Setup & Build Single LinkPadHostSetup.exe
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc).Source
+          }
+          & $iscc /DBuildOutputDir="..\bin\Release\net48" pc-host\installer\LinkPadHost.iss
+
+      - name: Upload Windows Installer & Standalone EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkpad-windows-host
+          path: |
+            pc-host\dist\LinkPadHostSetup.exe
+            pc-host\bin\Release\net48\LinkPadHost.exe
+            pc-host\bin\Release\net48\Nefarius.ViGEm.Client.dll
+
+  publish-release:
+    needs: [build-android, build-windows-installer]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
+          name: LinkPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-assets/LinkPadHostSetup.exe
+            release-assets/LinkPadHost.exe
+            release-assets/LinkPad-Android.apk

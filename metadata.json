@@ -1,0 +1,6 @@
+{
+  "name": "LinkPad",
+  "description": "Ultra-low-latency multi-player retro wireless controller and host receiver for Android phones, tablets, and TVs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
