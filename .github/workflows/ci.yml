@@ -77,9 +77,9 @@ jobs:
         run: msbuild pc-host/LinkPadHost.sln /p:Configuration=Release /p:Platform="Any CPU"
 
       - name: Setup Inno Setup
-        uses: ISCC/action-inno-setup@v1
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
-          filepath: pc-host/installer/LinkPadHost.iss
+          path: pc-host/installer/LinkPadHost.iss
 
       - name: Upload Windows Installer & Standalone EXE
         uses: actions/upload-artifact@v4
