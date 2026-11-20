@@ -31,29 +31,34 @@ jobs:
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           fi
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Decode debug keystore
+      - name: Ensure debug keystore
         shell: bash
         run: |
-          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
-            base64 --decode debug.keystore.base64 > debug.keystore
+          if [ ! -f debug.keystore ]; then
+            if [ -f debug.keystore.base64 ]; then
+              base64 --decode debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkeypair -alias androiddebugkey -keyalg RSA -keysize 2048 -keystore debug.keystore -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US" -validity 10000
+            fi
           fi
 
-      - name: Run unit tests & build APK
-        run: gradle :app:testDebugUnitTest :app:assembleDebug
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-      - name: Upload CI Android APK
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run unit tests & build APK
+        run: ./gradlew testDebugUnitTest assembleDebug --no-daemon
+
+      - name: Upload Android Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ci-linkpad-android-apk
+          name: linkpad-android-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-  windows-host-build:
-    name: Windows PC Host EXE & Installer
+  pc-host-build:
+    name: Build Windows PC Host (.NET 4.8 / Inno Setup)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -62,26 +67,25 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore & Build LinkPadHost.exe (.NET 4.8)
-        run: |
-          msbuild pc-host\LinkPadHost.csproj /t:Restore,Build /p:Configuration=Release /v:minimal
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
 
-      - name: Build LinkPadHostSetup.exe
-        shell: pwsh
-        run: |
-          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
-            choco install innosetup -y --no-progress
-          }
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) {
-            $iscc = (Get-Command iscc).Source
-          }
-          & $iscc /DBuildOutputDir="..\bin\Release\net48" pc-host\installer\LinkPadHost.iss
+      - name: Restore NuGet packages
+        run: nuget restore pc-host/LinkPadHost.sln
 
-      - name: Upload CI Windows Binaries
+      - name: Build PC Host solution
+        run: msbuild pc-host/LinkPadHost.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+      - name: Setup Inno Setup
+        uses: ISCC/action-inno-setup@v1
+        with:
+          filepath: pc-host/installer/LinkPadHost.iss
+
+      - name: Upload Windows Installer & Standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: ci-linkpad-windows-host
+          name: linkpad-windows-host
           path: |
-            pc-host\dist\LinkPadHostSetup.exe
-            pc-host\bin\Release\net48\LinkPadHost.exe
+            pc-host/dist/LinkPadHostSetup.exe
+            pc-host/bin/Release/net48/LinkPadHost.exe
+            pc-host/bin/Release/net48/Nefarius.ViGEm.Client.dll
