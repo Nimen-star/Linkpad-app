@@ -18,11 +18,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Accept Android SDK licenses
         shell: bash
@@ -42,16 +42,18 @@ jobs:
             fi
           fi
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Setup Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
 
       - name: Run unit tests & build APK
-        run: gradle :app:testDebugUnitTest assembleDebug --no-daemon
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon
 
       - name: Upload Android Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: linkpad-android-debug-apk
+          name: ci-linkpad-android-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
   pc-host-build:
@@ -64,25 +66,33 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup NuGet
-        uses: nuget/setup-nuget@v2
+      - name: Restore & Build LinkPadHost.exe (.NET 4.8)
+        run: msbuild pc-host\LinkPadHost.csproj /t:Restore,Build /p:Configuration=Release /v:minimal
 
-      - name: Restore NuGet packages
-        run: nuget restore pc-host/LinkPadHost.csproj
+      - name: Build LinkPadHostSetup.exe
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc).Source
+          }
+          & $iscc /DBuildOutputDir="..\bin\Release\net48" pc-host\installer\LinkPadHost.iss
 
-      - name: Build PC Host solution
-        run: msbuild pc-host/LinkPadHost.csproj /p:Configuration=Release /p:Platform="Any CPU"
-
-      - name: Setup Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-        with:
-          path: pc-host/installer/LinkPadHost.iss
+      - name: Stage Windows CI Binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pc-host\ci-out | Out-Null
+          Copy-Item pc-host\dist\LinkPadHostSetup.exe pc-host\ci-out\LinkPadHostSetup.exe -Force
+          Copy-Item pc-host\bin\Release\net48\LinkPadHost.exe pc-host\ci-out\LinkPadHost.exe -Force
+          if (Test-Path pc-host\bin\Release\net48\Nefarius.ViGEm.Client.dll) {
+            Copy-Item pc-host\bin\Release\net48\Nefarius.ViGEm.Client.dll pc-host\ci-out\Nefarius.ViGEm.Client.dll -Force
+          }
 
       - name: Upload Windows Installer & Standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: linkpad-windows-host
-          path: |
-            pc-host/dist/LinkPadHostSetup.exe
-            pc-host/bin/Release/net48/LinkPadHost.exe
-            pc-host/bin/Release/net48/Nefarius.ViGEm.Client.dll
+          name: ci-linkpad-windows-host
+          path: pc-host\ci-out\*

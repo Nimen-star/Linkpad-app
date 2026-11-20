@@ -95,9 +95,10 @@ gradle :app:testDebugUnitTest :app:assembleDebug
   ```
 
 ### Automated GitHub Releases (`.apk` + `.exe`)
-The workflow in [`.github/workflows/release.yml`](.github/workflows/release.yml) automatically builds **`LinkPad-Android.apk`**, **`LinkPadHostSetup.exe`**, and **`LinkPadHost.exe`**, generates SHA-256 checksums, and attaches all three binaries to a GitHub Release whenever:
-1. You push a version tag (e.g. `git tag v1.3.0 && git push origin v1.3.0`), **or**
-2. You click **Actions → Build & Publish LinkPad Releases → Run workflow** on GitHub.
+The workflow in [`.github/workflows/release.yml`](.github/workflows/release.yml) automatically builds **`LinkPad-Android.apk`**, **`LinkPadHostSetup.exe`**, and **`LinkPadHost.exe`**, generates SHA-256 checksums, and attaches all binaries to a GitHub Release whenever:
+1. You push to `main` (creates/updates the release matching `versionName` in `app/build.gradle.kts`, e.g. `v1.3.0`),
+2. You push a version tag (e.g. `git tag v1.3.0 && git push origin v1.3.0`), **or**
+3. You click **Actions → Build & Publish LinkPad Releases → Run workflow** on GitHub.
 
 > **Optional Release Signing (Recommended for Public Distribution):**
 > To sign `LinkPad-Android.apk` with your own upload key instead of the debug keystore (eliminating Android Play Protect unknown-signer warnings), add these three repository secrets under **Settings → Secrets and variables → Actions**:
