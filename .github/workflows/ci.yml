@@ -1,0 +1,87 @@
+name: LinkPad CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  android-build-and-test:
+    name: Android APK & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Decode debug keystore
+        shell: bash
+        run: |
+          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
+            base64 --decode debug.keystore.base64 > debug.keystore
+          fi
+
+      - name: Run unit tests & build APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Upload CI Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linkpad-android-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+  windows-host-build:
+    name: Windows PC Host EXE & Installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore & Build LinkPadHost.exe (.NET 4.8)
+        run: |
+          msbuild pc-host\LinkPadHost.csproj /t:Restore,Build /p:Configuration=Release /v:minimal
+
+      - name: Build LinkPadHostSetup.exe
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc).Source
+          }
+          & $iscc /DBuildOutputDir="..\bin\Release\net48" pc-host\installer\LinkPadHost.iss
+
+      - name: Upload CI Windows Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linkpad-windows-host
+          path: |
+            pc-host\dist\LinkPadHostSetup.exe
+            pc-host\bin\Release\net48\LinkPadHost.exe

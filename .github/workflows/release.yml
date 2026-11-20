@@ -27,10 +27,27 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+
+      - name: Decode debug keystore fallback
+        shell: bash
+        run: |
+          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
+            base64 --decode debug.keystore.base64 > debug.keystore
+          fi
+
+      - name: Run Android unit tests
+        run: gradle :app:testDebugUnitTest
 
       - name: Build Android APK
         env:
@@ -45,16 +62,19 @@ jobs:
             gradle :app:assembleRelease
             cp app/build/outputs/apk/release/app-release.apk dist-android/LinkPad-Android.apk
           else
-            echo "::warning::KEYSTORE_BASE64, STORE_PASSWORD, or KEY_PASSWORD secret missing - falling back to debug-signed APK which triggers Google Play Protect warnings."
+            echo "::warning::KEYSTORE_BASE64, STORE_PASSWORD, or KEY_PASSWORD secret missing - falling back to debug-signed APK."
             gradle :app:assembleDebug
             cp app/build/outputs/apk/debug/app-debug.apk dist-android/LinkPad-Android.apk
           fi
+          sha256sum dist-android/LinkPad-Android.apk > dist-android/LinkPad-Android.apk.sha256
 
       - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: linkpad-android-apk
-          path: dist-android/LinkPad-Android.apk
+          path: |
+            dist-android/LinkPad-Android.apk
+            dist-android/LinkPad-Android.apk.sha256
 
   build-windows-installer:
     runs-on: windows-latest
@@ -81,6 +101,13 @@ jobs:
           }
           & $iscc /DBuildOutputDir="..\bin\Release\net48" pc-host\installer\LinkPadHost.iss
 
+      - name: Generate SHA256 checksums for Windows binaries
+        shell: pwsh
+        run: |
+          $setupHash = (Get-FileHash pc-host\dist\LinkPadHostSetup.exe -Algorithm SHA256).Hash.ToLower()
+          $exeHash = (Get-FileHash pc-host\bin\Release\net48\LinkPadHost.exe -Algorithm SHA256).Hash.ToLower()
+          "$setupHash  LinkPadHostSetup.exe`n$exeHash  LinkPadHost.exe" | Out-File -Encoding ascii pc-host\dist\windows-sha256.txt
+
       - name: Upload Windows Installer & Standalone EXE
         uses: actions/upload-artifact@v4
         with:
@@ -89,6 +116,7 @@ jobs:
             pc-host\dist\LinkPadHostSetup.exe
             pc-host\bin\Release\net48\LinkPadHost.exe
             pc-host\bin\Release\net48\Nefarius.ViGEm.Client.dll
+            pc-host\dist\windows-sha256.txt
 
   publish-release:
     needs: [build-android, build-windows-installer]
@@ -101,13 +129,43 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Build Release Notes Summary
+        id: notes
+        shell: bash
+        run: |
+          cat <<'EOF' > release-body.md
+          ### Included Downloads
+
+          | File | Platform | Description |
+          | --- | --- | --- |
+          | `LinkPad-Android.apk` | Android 7.0+ | LinkPad Controller & Host mobile app |
+          | `LinkPadHostSetup.exe` | Windows 10 / 11 | Full Windows installer wizard (shortcuts + uninstaller) |
+          | `LinkPadHost.exe` | Windows 10 / 11 | Standalone portable PC Host executable |
+
+          > **Windows PC Users:** Install [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases) if you want virtual Xbox 360 controllers (`LinkPad P1–P4`), or use Keyboard mode out of the box.
+
+          <details>
+          <summary>SHA-256 Checksums</summary>
+
+          ```text
+          EOF
+          cat release-assets/LinkPad-Android.apk.sha256 >> release-body.md
+          cat release-assets/windows-sha256.txt >> release-body.md
+          cat <<'EOF' >> release-body.md
+          ```
+
+          </details>
+          EOF
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
           name: LinkPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
+          body_path: release-body.md
           draft: false
           prerelease: false
+          make_latest: true
           generate_release_notes: true
           files: |
             release-assets/LinkPadHostSetup.exe
