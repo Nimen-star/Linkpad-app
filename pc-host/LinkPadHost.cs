@@ -1671,12 +1671,13 @@ namespace LinkPadHostApp
 
     internal sealed class GlassCardPanel : Panel
     {
-        public int CornerRadius = 18;
-        public Color TopFill = Color.FromArgb(24, 31, 45);
-        public Color BottomFill = Color.FromArgb(15, 20, 30);
-        public Color RimTop = Color.FromArgb(62, 255, 255, 255);
-        public Color RimBottom = Color.FromArgb(16, 255, 255, 255);
+        public int CornerRadius = 16;
+        public Color TopFill = Color.FromArgb(20, 26, 39);
+        public Color BottomFill = Color.FromArgb(14, 19, 29);
+        public Color RimTop = Color.FromArgb(52, 255, 255, 255);
+        public Color RimBottom = Color.FromArgb(14, 255, 255, 255);
         public Color AccentBorder = Color.Empty;
+        public Color TopAccentBar = Color.Empty;
 
         public GlassCardPanel()
         {
@@ -1700,14 +1701,23 @@ namespace LinkPadHostApp
                     g.FillPath(fill, path);
                 }
 
-                Rectangle sheen = new Rectangle(rect.X + 1, rect.Y + 1, rect.Width - 2, Math.Max(8, rect.Height / 3));
+                g.SetClip(path);
+                Rectangle sheen = new Rectangle(rect.X + 1, rect.Y + 1, rect.Width - 2, Math.Max(10, rect.Height / 4));
                 using (LinearGradientBrush sheenBrush = new LinearGradientBrush(
-                    sheen, Color.FromArgb(16, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
+                    sheen, Color.FromArgb(12, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
                 {
-                    g.SetClip(path);
                     g.FillRectangle(sheenBrush, sheen);
-                    g.ResetClip();
                 }
+
+                if (!TopAccentBar.IsEmpty)
+                {
+                    Rectangle accent = new Rectangle(rect.X, rect.Y, rect.Width, 3);
+                    using (SolidBrush ab = new SolidBrush(Color.FromArgb(175, TopAccentBar)))
+                    {
+                        g.FillRectangle(ab, accent);
+                    }
+                }
+                g.ResetClip();
             }
         }
 
@@ -1723,7 +1733,7 @@ namespace LinkPadHostApp
             {
                 if (!AccentBorder.IsEmpty)
                 {
-                    using (Pen ap = new Pen(Color.FromArgb(155, AccentBorder), 1.25f))
+                    using (Pen ap = new Pen(Color.FromArgb(150, AccentBorder), 1.25f))
                     {
                         g.DrawPath(ap, path);
                     }
@@ -1742,8 +1752,8 @@ namespace LinkPadHostApp
 
     internal sealed class GlassLogoBadge : Control
     {
-        public Color BodyColor = Color.FromArgb(236, 242, 250);
-        public Color CutoutColor = Color.FromArgb(15, 20, 29);
+        public Color BodyColor = Color.FromArgb(240, 245, 252);
+        public Color CutoutColor = Color.FromArgb(15, 21, 32);
 
         public GlassLogoBadge()
         {
@@ -1760,11 +1770,11 @@ namespace LinkPadHostApp
             using (GraphicsPath path = MainForm.CreateRoundedRect(rect, 11))
             {
                 using (LinearGradientBrush bg = new LinearGradientBrush(
-                    rect, Color.FromArgb(34, 45, 64), Color.FromArgb(17, 23, 34), 90f))
+                    rect, Color.FromArgb(32, 46, 70), Color.FromArgb(16, 22, 34), 90f))
                 {
                     g.FillPath(bg, path);
                 }
-                using (Pen rim = new Pen(Color.FromArgb(72, 255, 255, 255), 1.0f))
+                using (Pen rim = new Pen(Color.FromArgb(88, 124, 178, 255), 1.0f))
                 {
                     g.DrawPath(rim, path);
                 }
@@ -1779,11 +1789,13 @@ namespace LinkPadHostApp
 
     internal sealed class GlassPill : Control
     {
-        public int CornerRadius = 9;
-        public Color FillColor = Color.FromArgb(15, 20, 29);
+        public int CornerRadius = 11;
+        public Color FillColor = Color.FromArgb(13, 18, 28);
         public Color BorderColor = Color.FromArgb(44, 56, 76);
         public Color DotColor = Color.Empty;
         public Color TextColor = Color.FromArgb(214, 223, 237);
+        public bool DrawEyeGlyph = false;
+        public bool EyeOpen = false;
 
         private bool _hovered;
 
@@ -1801,11 +1813,12 @@ namespace LinkPadHostApp
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
             if (rect.Width <= 2 || rect.Height <= 2) return;
 
             Color bg = (_hovered && Cursor == Cursors.Hand)
-                ? Color.FromArgb(Math.Min(255, FillColor.R + 10), Math.Min(255, FillColor.G + 12), Math.Min(255, FillColor.B + 16))
+                ? Color.FromArgb(Math.Min(255, FillColor.R + 10), Math.Min(255, FillColor.G + 12), Math.Min(255, FillColor.B + 18))
                 : FillColor;
 
             using (GraphicsPath path = MainForm.CreateRoundedRect(rect, CornerRadius))
@@ -1814,18 +1827,45 @@ namespace LinkPadHostApp
                 using (Pen pen = new Pen(BorderColor, 1.0f)) g.DrawPath(pen, path);
             }
 
-            Rectangle textRect = new Rectangle(4, 0, Width - 8, Height);
-            if (!DotColor.IsEmpty)
+            int leftOffset = 6;
+            if (DrawEyeGlyph)
+            {
+                float cy = Height * 0.5f;
+                float ex = 15f;
+                using (Pen ep = new Pen(TextColor, 1.3f))
+                {
+                    g.DrawArc(ep, ex - 6f, cy - 3.5f, 12f, 7f, 195, 150);
+                    g.DrawArc(ep, ex - 6f, cy - 3.5f, 12f, 7f, 15, 150);
+                    if (EyeOpen)
+                    {
+                        using (SolidBrush eb = new SolidBrush(TextColor))
+                        {
+                            g.FillEllipse(eb, ex - 2f, cy - 2f, 4f, 4f);
+                        }
+                    }
+                    else
+                    {
+                        g.DrawLine(ep, ex - 5f, cy + 4f, ex + 5f, cy - 4f);
+                    }
+                }
+                leftOffset = 24;
+            }
+            else if (!DotColor.IsEmpty)
             {
                 int dotSize = 6;
                 int dy = (Height - dotSize) / 2;
+                using (SolidBrush db = new SolidBrush(Color.FromArgb(55, DotColor)))
+                {
+                    g.FillEllipse(db, 8, dy - 2, dotSize + 4, dotSize + 4);
+                }
                 using (SolidBrush db = new SolidBrush(DotColor))
                 {
-                    g.FillEllipse(db, 9, dy, dotSize, dotSize);
+                    g.FillEllipse(db, 10, dy, dotSize, dotSize);
                 }
-                textRect = new Rectangle(18, 0, Width - 22, Height);
+                leftOffset = 20;
             }
 
+            Rectangle textRect = new Rectangle(leftOffset, 0, Math.Max(1, Width - leftOffset - 6), Height);
             TextRenderer.DrawText(
                 g,
                 Text ?? "",
@@ -1839,11 +1879,11 @@ namespace LinkPadHostApp
     internal sealed class GlassButton : Control
     {
         public int CornerRadius = 10;
-        public Color BgColor = Color.FromArgb(27, 34, 48);
+        public Color BgColor = Color.FromArgb(26, 34, 49);
         public Color TextColor = Color.FromArgb(243, 246, 251);
         public Color BorderColor = Color.FromArgb(62, 77, 102);
-        public Color DisabledBgColor = Color.FromArgb(20, 48, 37);
-        public Color DisabledTextColor = Color.FromArgb(92, 224, 168);
+        public Color DisabledBgColor = Color.FromArgb(19, 44, 35);
+        public Color DisabledTextColor = Color.FromArgb(74, 222, 154);
         public Color DisabledBorderColor = Color.FromArgb(52, 138, 102);
 
         private bool _hovered;
@@ -1883,6 +1923,7 @@ namespace LinkPadHostApp
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
             if (rect.Width <= 2 || rect.Height <= 2) return;
 
@@ -1909,7 +1950,7 @@ namespace LinkPadHostApp
                 }
                 Rectangle sheen = new Rectangle(rect.X + 1, rect.Y + 1, rect.Width - 2, Math.Max(4, rect.Height / 2));
                 using (LinearGradientBrush sb = new LinearGradientBrush(
-                    sheen, Color.FromArgb(20, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
+                    sheen, Color.FromArgb(18, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
                 {
                     g.SetClip(path);
                     g.FillRectangle(sb, sheen);
@@ -1932,13 +1973,120 @@ namespace LinkPadHostApp
         }
     }
 
-    internal sealed class GlassSwitch : Control
+    internal sealed class SegmentedModeSwitch : Control
+    {
+        private bool _keyboardSelected;
+        private int _hoveredIndex = -1;
+
+        public Color ActiveFill = Color.FromArgb(30, 50, 82);
+        public Color ActiveBorder = Color.FromArgb(110, 168, 254);
+        public Color ActiveText = Color.FromArgb(244, 247, 252);
+        public Color IdleText = Color.FromArgb(148, 160, 182);
+
+        public event EventHandler ModeChanged;
+
+        public bool KeyboardSelected
+        {
+            get { return _keyboardSelected; }
+            set
+            {
+                if (_keyboardSelected != value)
+                {
+                    _keyboardSelected = value;
+                    Invalidate();
+                }
+            }
+        }
+
+        public SegmentedModeSwitch()
+        {
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            int idx = e.X < Width / 2 ? 0 : 1;
+            if (idx != _hoveredIndex)
+            {
+                _hoveredIndex = idx;
+                Invalidate();
+            }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            _hoveredIndex = -1;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                bool wantKeyboard = e.X >= Width / 2;
+                if (wantKeyboard != _keyboardSelected)
+                {
+                    _keyboardSelected = wantKeyboard;
+                    Invalidate();
+                    EventHandler h = ModeChanged;
+                    if (h != null) h(this, EventArgs.Empty);
+                }
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+            Rectangle outer = new Rectangle(0, 0, Width - 1, Height - 1);
+            using (GraphicsPath op = MainForm.CreateRoundedRect(outer, 10))
+            {
+                using (SolidBrush ob = new SolidBrush(Color.FromArgb(10, 14, 22))) g.FillPath(ob, op);
+                using (Pen open = new Pen(Color.FromArgb(46, 58, 80), 1.0f)) g.DrawPath(open, op);
+            }
+
+            int half = Width / 2;
+            Rectangle segRect = _keyboardSelected
+                ? new Rectangle(half + 2, 3, Width - half - 5, Height - 7)
+                : new Rectangle(3, 3, half - 5, Height - 7);
+
+            using (GraphicsPath sp = MainForm.CreateRoundedRect(segRect, 8))
+            {
+                using (SolidBrush sb = new SolidBrush(ActiveFill)) g.FillPath(sb, sp);
+                using (Pen spen = new Pen(Color.FromArgb(165, ActiveBorder), 1.0f)) g.DrawPath(spen, sp);
+            }
+
+            Rectangle leftRect = new Rectangle(2, 0, half - 4, Height);
+            Rectangle rightRect = new Rectangle(half + 2, 0, Width - half - 4, Height);
+
+            Color leftColor = !_keyboardSelected ? ActiveText : (_hoveredIndex == 0 ? Color.FromArgb(200, 210, 228) : IdleText);
+            Color rightColor = _keyboardSelected ? ActiveText : (_hoveredIndex == 1 ? Color.FromArgb(200, 210, 228) : IdleText);
+
+            TextRenderer.DrawText(g, "XInput", Font, leftRect, leftColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, "Keyboard", Font, rightRect, rightColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    internal sealed class GlassSwitchRow : Control
     {
         private bool _checked;
         private bool _hovered;
 
-        public Color ActiveTrackColor = Color.FromArgb(124, 178, 255);
-        public Color TextColor = Color.FromArgb(243, 246, 251);
+        public string Subtitle = "";
+        public Color ActiveTrackColor = Color.FromArgb(110, 168, 254);
+        public Color TitleColor = Color.FromArgb(243, 246, 251);
+        public Color SubtitleColor = Color.FromArgb(124, 136, 158);
+        public Font SubtitleFont = new Font("Segoe UI", 8.0f);
 
         public event EventHandler CheckedChanged;
 
@@ -1957,7 +2105,7 @@ namespace LinkPadHostApp
             }
         }
 
-        public GlassSwitch()
+        public GlassSwitchRow()
         {
             DoubleBuffered = true;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
@@ -1977,17 +2125,29 @@ namespace LinkPadHostApp
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+            if (_hovered)
+            {
+                Rectangle hoverRect = new Rectangle(0, 0, Width - 1, Height - 1);
+                using (GraphicsPath hp = MainForm.CreateRoundedRect(hoverRect, 9))
+                using (SolidBrush hb = new SolidBrush(Color.FromArgb(16, 255, 255, 255)))
+                {
+                    g.FillPath(hb, hp);
+                }
+            }
 
             int trackW = 34;
             int trackH = 19;
+            int tx = Width - trackW - 6;
             int ty = (Height - trackH) / 2;
-            Rectangle trackRect = new Rectangle(0, ty, trackW, trackH);
+            Rectangle trackRect = new Rectangle(tx, ty, trackW, trackH);
 
             Color trackFill = _checked
-                ? Color.FromArgb(165, ActiveTrackColor)
-                : (_hovered ? Color.FromArgb(34, 43, 58) : Color.FromArgb(25, 32, 45));
+                ? Color.FromArgb(175, ActiveTrackColor)
+                : (_hovered ? Color.FromArgb(36, 46, 62) : Color.FromArgb(24, 31, 44));
             Color trackBorder = _checked
-                ? Color.FromArgb(210, ActiveTrackColor)
+                ? Color.FromArgb(220, ActiveTrackColor)
                 : Color.FromArgb(62, 74, 96);
 
             using (GraphicsPath tp = MainForm.CreateRoundedRect(trackRect, trackH / 2))
@@ -1997,30 +2157,50 @@ namespace LinkPadHostApp
             }
 
             int knobSize = 13;
-            int kx = _checked ? (trackW - knobSize - 3) : 3;
+            int kx = _checked ? (tx + trackW - knobSize - 3) : (tx + 3);
             int ky = ty + (trackH - knobSize) / 2;
-            Color knobColor = _checked ? Color.FromArgb(245, 248, 253) : Color.FromArgb(156, 168, 188);
+            Color knobColor = _checked ? Color.FromArgb(246, 249, 255) : Color.FromArgb(156, 168, 188);
             using (SolidBrush kb = new SolidBrush(knobColor))
             {
                 g.FillEllipse(kb, kx, ky, knobSize, knobSize);
             }
 
-            Rectangle textRect = new Rectangle(trackW + 10, 0, Math.Max(1, Width - trackW - 10), Height);
-            TextRenderer.DrawText(
-                g,
-                Text ?? "",
-                Font,
-                textRect,
-                TextColor,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            int textW = Math.Max(1, tx - 14);
+            if (!string.IsNullOrEmpty(Subtitle))
+            {
+                TextRenderer.DrawText(
+                    g,
+                    Text ?? "",
+                    Font,
+                    new Rectangle(6, 2, textW, 18),
+                    TitleColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                TextRenderer.DrawText(
+                    g,
+                    Subtitle,
+                    SubtitleFont,
+                    new Rectangle(6, 19, textW, 16),
+                    SubtitleColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
+            else
+            {
+                TextRenderer.DrawText(
+                    g,
+                    Text ?? "",
+                    Font,
+                    new Rectangle(6, 0, textW, Height),
+                    TitleColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
         }
     }
 
     internal sealed class CodeDigitTile : Control
     {
-        public Color WellColor = Color.FromArgb(11, 15, 23);
-        public Color RimColor = Color.FromArgb(52, 66, 90);
-        public Color DigitColor = Color.FromArgb(243, 246, 251);
+        public Color WellColor = Color.FromArgb(9, 13, 21);
+        public Color RimColor = Color.FromArgb(50, 66, 94);
+        public Color DigitColor = Color.FromArgb(244, 247, 252);
 
         public CodeDigitTile()
         {
@@ -2033,11 +2213,12 @@ namespace LinkPadHostApp
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (GraphicsPath path = MainForm.CreateRoundedRect(rect, 13))
+            using (GraphicsPath path = MainForm.CreateRoundedRect(rect, 12))
             {
                 using (LinearGradientBrush bg = new LinearGradientBrush(
-                    rect, Color.FromArgb(16, 21, 31), WellColor, 90f))
+                    rect, Color.FromArgb(16, 22, 34), WellColor, 90f))
                 {
                     g.FillPath(bg, path);
                 }
@@ -2056,34 +2237,167 @@ namespace LinkPadHostApp
         }
     }
 
+    internal sealed class MiniGamepadVisualizer : Control
+    {
+        public bool IsActive;
+        public Color AccentColor = Color.FromArgb(74, 222, 154);
+        public int ButtonMask;
+        public byte Lx;
+        public byte Ly;
+        public byte Rx;
+        public byte Ry;
+
+        public MiniGamepadVisualizer()
+        {
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        public void UpdateInput(bool active, Color accent, int mask, byte lx, byte ly, byte rx, byte ry)
+        {
+            if (IsActive == active && AccentColor == accent && ButtonMask == mask
+                && Lx == lx && Ly == ly && Rx == rx && Ry == ry)
+            {
+                return;
+            }
+            IsActive = active;
+            AccentColor = accent;
+            ButtonMask = mask;
+            Lx = lx;
+            Ly = ly;
+            Rx = rx;
+            Ry = ry;
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
+            using (GraphicsPath bp = MainForm.CreateRoundedRect(box, 10))
+            {
+                using (SolidBrush bg = new SolidBrush(Color.FromArgb(10, 14, 22))) g.FillPath(bg, bp);
+                Color rim = IsActive ? Color.FromArgb(75, AccentColor) : Color.FromArgb(32, 42, 58);
+                using (Pen pen = new Pen(rim, 1.0f)) g.DrawPath(pen, bp);
+            }
+
+            // Shoulder/trigger indicators across top strip: L2, L1, R1, R2
+            DrawTriggerPill(g, 10, 6, 20, 4, (ButtonMask & (1 << 12)) != 0);
+            DrawTriggerPill(g, 33, 6, 20, 4, (ButtonMask & (1 << 8)) != 0);
+            DrawTriggerPill(g, Width - 53, 6, 20, 4, (ButtonMask & (1 << 9)) != 0);
+            DrawTriggerPill(g, Width - 30, 6, 20, 4, (ButtonMask & (1 << 13)) != 0);
+
+            // Left stick & Right stick rings
+            DrawStickWell(g, 24f, 34f, 11f, Lx, Ly, (ButtonMask & (1 << 14)) != 0);
+            DrawStickWell(g, 60f, 34f, 11f, Rx, Ry, (ButtonMask & (1 << 15)) != 0);
+
+            // D-pad mini cross (center at x=92, y=34)
+            float dx = 92f;
+            float dy = 34f;
+            DrawFaceDot(g, dx, dy - 7f, 2.5f, (ButtonMask & (1 << 0)) != 0); // Up
+            DrawFaceDot(g, dx, dy + 7f, 2.5f, (ButtonMask & (1 << 1)) != 0); // Down
+            DrawFaceDot(g, dx - 7f, dy, 2.5f, (ButtonMask & (1 << 2)) != 0); // Left
+            DrawFaceDot(g, dx + 7f, dy, 2.5f, (ButtonMask & (1 << 3)) != 0); // Right
+
+            // ABXY mini diamond (center at x=128, y=34)
+            float ax = 128f;
+            float ay = 34f;
+            DrawFaceDot(g, ax, ay + 7f, 2.8f, (ButtonMask & (1 << 4)) != 0); // A
+            DrawFaceDot(g, ax + 7f, ay, 2.8f, (ButtonMask & (1 << 5)) != 0); // B
+            DrawFaceDot(g, ax - 7f, ay, 2.8f, (ButtonMask & (1 << 6)) != 0); // X
+            DrawFaceDot(g, ax, ay - 7f, 2.8f, (ButtonMask & (1 << 7)) != 0); // Y
+        }
+
+        private void DrawTriggerPill(Graphics g, int x, int y, int w, int h, bool pressed)
+        {
+            Color fill = pressed
+                ? AccentColor
+                : (IsActive ? Color.FromArgb(34, 45, 64) : Color.FromArgb(24, 30, 42));
+            using (GraphicsPath tp = MainForm.CreateRoundedRect(new Rectangle(x, y, w, h), 2))
+            using (SolidBrush sb = new SolidBrush(fill))
+            {
+                g.FillPath(sb, tp);
+            }
+        }
+
+        private void DrawStickWell(Graphics g, float cx, float cy, float radius, byte rawX, byte rawY, bool clicked)
+        {
+            Color ringColor = clicked
+                ? AccentColor
+                : (IsActive ? Color.FromArgb(52, 68, 94) : Color.FromArgb(32, 40, 54));
+            using (Pen p = new Pen(ringColor, 1.2f))
+            {
+                g.DrawEllipse(p, cx - radius, cy - radius, radius * 2f, radius * 2f);
+            }
+
+            float nx = unchecked((sbyte)rawX) / 127f;
+            float ny = unchecked((sbyte)rawY) / 127f;
+            float maxTravel = radius - 3.5f;
+            float px = cx + nx * maxTravel;
+            float py = cy + ny * maxTravel;
+            bool moved = Math.Abs(nx) > 0.1f || Math.Abs(ny) > 0.1f || clicked;
+
+            Color dotColor = !IsActive
+                ? Color.FromArgb(46, 56, 74)
+                : (moved ? AccentColor : Color.FromArgb(145, 162, 188));
+            float r = moved ? 3.5f : 2.8f;
+            using (SolidBrush sb = new SolidBrush(dotColor))
+            {
+                g.FillEllipse(sb, px - r, py - r, r * 2f, r * 2f);
+            }
+        }
+
+        private void DrawFaceDot(Graphics g, float cx, float cy, float r, bool pressed)
+        {
+            Color c = pressed
+                ? AccentColor
+                : (IsActive ? Color.FromArgb(42, 54, 76) : Color.FromArgb(28, 35, 48));
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                g.FillEllipse(sb, cx - r, cy - r, r * 2f, r * 2f);
+            }
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private const string ViGEmInstallerUrl = "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe";
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
         private readonly HostEngine _engine;
-        // Exact Android LinkPad Liquid Glass palette (Color.kt)
-        private readonly Color _bg = Color.FromArgb(9, 12, 17);           // ObsidianBg
-        private readonly Color _well = Color.FromArgb(12, 16, 23);        // OledWell
-        private readonly Color _keycap = Color.FromArgb(27, 34, 48);      // KeycapSurface
-        private readonly Color _textMain = Color.FromArgb(243, 246, 251); // TitaniumText
-        private readonly Color _textMuted = Color.FromArgb(140, 151, 171);// PewterMuted
-        private readonly Color _silver = Color.FromArgb(214, 223, 237);   // BrushedSilver
-        private readonly Color _blue = Color.FromArgb(124, 178, 255);     // CobaltBlue
-        private readonly Color _emerald = Color.FromArgb(92, 224, 168);   // SignalEmerald
-        private readonly Color _amber = Color.FromArgb(229, 184, 105);    // WarmAmber
-        private readonly Color _crimson = Color.FromArgb(242, 116, 116);  // PrecisionCrimson
+        private readonly Color _bg = Color.FromArgb(10, 13, 20);
+        private readonly Color _well = Color.FromArgb(9, 13, 21);
+        private readonly Color _keycap = Color.FromArgb(26, 34, 49);
+        private readonly Color _textMain = Color.FromArgb(244, 247, 252);
+        private readonly Color _textMuted = Color.FromArgb(136, 149, 172);
+        private readonly Color _silver = Color.FromArgb(214, 223, 237);
+        private readonly Color _blue = Color.FromArgb(110, 168, 254);
+        private readonly Color _emerald = Color.FromArgb(74, 222, 154);
+        private readonly Color _amber = Color.FromArgb(240, 184, 91);
+        private readonly Color _crimson = Color.FromArgb(240, 106, 106);
         private readonly Color[] _slotColors = new Color[]
         {
-            Color.FromArgb(92, 224, 168),   // P1 SignalEmerald
-            Color.FromArgb(124, 178, 255),  // P2 CobaltBlue
-            Color.FromArgb(229, 184, 105),  // P3 WarmAmber
-            Color.FromArgb(192, 155, 255)   // P4 Violet
+            Color.FromArgb(74, 222, 154),   // P1 Emerald
+            Color.FromArgb(110, 168, 254),  // P2 Cobalt
+            Color.FromArgb(240, 184, 91),   // P3 Amber
+            Color.FromArgb(183, 148, 246)   // P4 Violet
         };
 
         private GlassPill _ipPill;
         private GlassPill _ppsPill;
+        private GlassPill _connectedCountPill;
         private GlassButton _copyBtn;
         private readonly CodeDigitTile[] _digitBoxes = new CodeDigitTile[6];
+
+        private bool _ipRevealed = false;
+        private int _ipRevealUntilTick = 0;
         private int _ipCopiedUntilTick = 0;
         private int _codeCopiedUntilTick = 0;
         private bool _ipCopiedActive = false;
@@ -2097,12 +2411,12 @@ namespace LinkPadHostApp
         private System.Windows.Forms.Timer _animTimer;
 
         private GlassButton _installDriverBtn;
-        private GlassButton _modeToggleBtn;
+        private SegmentedModeSwitch _modeSwitch;
         private GlassButton _joyCplBtn;
         private GlassButton _firewallBtn;
-        private GlassSwitch _rememberSwitch;
-        private GlassSwitch _openFavSwitch;
-        private GlassSwitch _uniqueNamesSwitch;
+        private GlassSwitchRow _rememberSwitch;
+        private GlassSwitchRow _openFavSwitch;
+        private GlassSwitchRow _uniqueNamesSwitch;
         private Label _trustedCountLabel;
         private GlassButton _clearTrustBtn;
 
@@ -2110,6 +2424,7 @@ namespace LinkPadHostApp
         private readonly GlassPill[] _slotBadges = new GlassPill[4];
         private readonly Label[] _slotTitles = new Label[4];
         private readonly Label[] _slotMasks = new Label[4];
+        private readonly MiniGamepadVisualizer[] _slotVisuals = new MiniGamepadVisualizer[4];
         private readonly GlassButton[] _kickBtns = new GlassButton[4];
 
         private bool _keyboardOverride = false;
@@ -2120,7 +2435,9 @@ namespace LinkPadHostApp
         {
             DoubleBuffered = true;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            AutoScaleMode = AutoScaleMode.None;
+            SuspendLayout();
+            AutoScaleDimensions = new SizeF(96F, 96F);
+            AutoScaleMode = AutoScaleMode.Dpi;
 
             _engine = new HostEngine();
             _engine.StateChanged += delegate
@@ -2131,9 +2448,9 @@ namespace LinkPadHostApp
                 }
             };
 
-            Text = "LinkPad";
-            ClientSize = new Size(580, 672);
-            MinimumSize = new Size(580, 672);
+            Text = "LinkPad PC Host";
+            ClientSize = new Size(880, 560);
+            MinimumSize = new Size(880, 560);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = _bg;
             ForeColor = _textMain;
@@ -2158,6 +2475,11 @@ namespace LinkPadHostApp
                     _ipCopiedActive = false;
                     needRefresh = true;
                 }
+                if (_ipRevealed && unchecked(now - _ipRevealUntilTick) >= 0)
+                {
+                    _ipRevealed = false;
+                    needRefresh = true;
+                }
                 if (_codeCopiedActive && unchecked(now - _codeCopiedUntilTick) >= 0)
                 {
                     _codeCopiedActive = false;
@@ -2165,15 +2487,36 @@ namespace LinkPadHostApp
                     needRefresh = true;
                 }
                 if (needRefresh) RefreshUi();
-                if (!_installingDriver && !_ipCopiedActive && !_codeCopiedActive)
+                if (!_installingDriver && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive)
                 {
                     _animTimer.Stop();
                 }
             };
 
             BuildLayout();
+            ResumeLayout(false);
+            PerformLayout();
             _engine.Start();
             RefreshUi();
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            EnableDarkTitleBar();
+        }
+
+        private void EnableDarkTitleBar()
+        {
+            try
+            {
+                int dark = 1;
+                if (DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int)) != 0)
+                {
+                    DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref dark, sizeof(int));
+                }
+            }
+            catch { }
         }
 
         public static GraphicsPath CreateRoundedRect(Rectangle bounds, int radius)
@@ -2210,8 +2553,13 @@ namespace LinkPadHostApp
             g.Clear(_bg);
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            DrawAmbientGlow(g, new Rectangle(-120, -110, 440, 440), Color.FromArgb(26, 124, 178, 255));
-            DrawAmbientGlow(g, new Rectangle(Width - 280, Height - 280, 420, 420), Color.FromArgb(20, 92, 224, 168));
+            DrawAmbientGlow(g, new Rectangle(-140, -140, 480, 480), Color.FromArgb(24, 110, 168, 254));
+            DrawAmbientGlow(g, new Rectangle(Width - 320, Height - 300, 440, 440), Color.FromArgb(18, 74, 222, 154));
+
+            using (Pen sep = new Pen(Color.FromArgb(26, 255, 255, 255), 1.0f))
+            {
+                g.DrawLine(sep, 22, 62, Width - 22, 62);
+            }
         }
 
         private static void DrawAmbientGlow(Graphics g, Rectangle rect, Color centerColor)
@@ -2230,36 +2578,47 @@ namespace LinkPadHostApp
 
         private void BuildLayout()
         {
-            // Header
+            // Top Toolbar
             GlassLogoBadge logoBadge = new GlassLogoBadge
             {
-                Location = new Point(20, 15),
-                Size = new Size(40, 40),
+                Location = new Point(22, 13),
+                Size = new Size(38, 38),
                 BodyColor = _textMain,
-                CutoutColor = Color.FromArgb(14, 19, 28)
+                CutoutColor = Color.FromArgb(16, 22, 34)
             };
             Controls.Add(logoBadge);
 
             Label title = new Label
             {
                 Text = "LinkPad",
-                Font = new Font("Segoe UI Semibold", 15f),
+                Font = new Font("Segoe UI Semibold", 14.5f),
                 ForeColor = _textMain,
                 BackColor = Color.Transparent,
-                Location = new Point(70, 17),
+                Location = new Point(68, 13),
                 AutoSize = true
             };
             Controls.Add(title);
 
+            Label subTitle = new Label
+            {
+                Text = "Wireless XInput & LAN Controller Receiver",
+                Font = new Font("Segoe UI", 8.0f),
+                ForeColor = _textMuted,
+                BackColor = Color.Transparent,
+                Location = new Point(70, 38),
+                AutoSize = true
+            };
+            Controls.Add(subTitle);
+
             GlassPill hostPill = new GlassPill
             {
-                Text = "PC HOST",
-                Location = new Point(158, 23),
-                Size = new Size(68, 24),
-                CornerRadius = 11,
-                Font = new Font("Consolas", 8.2f, FontStyle.Bold),
-                FillColor = Color.FromArgb(18, 27, 42),
-                BorderColor = Color.FromArgb(64, 124, 178, 255),
+                Text = "PC HOST \u00B7 v1.3",
+                Location = new Point(162, 17),
+                Size = new Size(94, 20),
+                CornerRadius = 9,
+                Font = new Font("Consolas", 7.6f, FontStyle.Bold),
+                FillColor = Color.FromArgb(18, 28, 44),
+                BorderColor = Color.FromArgb(62, 110, 168, 254),
                 TextColor = _blue
             };
             Controls.Add(hostPill);
@@ -2267,12 +2626,12 @@ namespace LinkPadHostApp
             _ppsPill = new GlassPill
             {
                 Text = "0 pkt/s",
-                Location = new Point(304, 23),
-                Size = new Size(90, 24),
+                Location = new Point(402, 18),
+                Size = new Size(92, 28),
                 CornerRadius = 11,
                 Font = new Font("Consolas", 8.2f, FontStyle.Bold),
                 FillColor = _well,
-                BorderColor = Color.FromArgb(54, 92, 224, 168),
+                BorderColor = Color.FromArgb(48, 74, 222, 154),
                 DotColor = _emerald,
                 TextColor = _emerald
             };
@@ -2280,50 +2639,72 @@ namespace LinkPadHostApp
 
             _ipPill = new GlassPill
             {
-                Text = HostEngine.GetPrimaryLocalIpv4() + ":" + Protocol.HOST_UDP_PORT,
-                Location = new Point(402, 23),
-                Size = new Size(158, 24),
+                Text = "\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022 :" + Protocol.HOST_UDP_PORT,
+                Location = new Point(502, 18),
+                Size = new Size(188, 28),
                 CornerRadius = 11,
                 Font = new Font("Consolas", 8.2f, FontStyle.Bold),
                 FillColor = _well,
-                BorderColor = Color.FromArgb(52, 66, 90),
+                BorderColor = Color.FromArgb(50, 64, 88),
                 TextColor = _silver,
+                DrawEyeGlyph = true,
+                EyeOpen = false,
                 Cursor = Cursors.Hand
             };
             _ipPill.Click += delegate
             {
                 try
                 {
-                    Clipboard.SetText(HostEngine.GetPrimaryLocalIpv4());
-                    _ipCopiedActive = true;
-                    _ipCopiedUntilTick = unchecked(Environment.TickCount + 1800);
-                    _ipPill.Text = "IP Copied";
+                    if (!_ipRevealed)
+                    {
+                        _ipRevealed = true;
+                        _ipRevealUntilTick = unchecked(Environment.TickCount + 8000);
+                        Clipboard.SetText(HostEngine.GetPrimaryLocalIpv4());
+                        _ipCopiedActive = true;
+                        _ipCopiedUntilTick = unchecked(Environment.TickCount + 1800);
+                    }
+                    else
+                    {
+                        _ipRevealed = false;
+                        _ipCopiedActive = false;
+                    }
+                    RefreshUi();
                     if (!_animTimer.Enabled) _animTimer.Start();
                 }
                 catch { }
             };
             Controls.Add(_ipPill);
 
+            _joyCplBtn = CreateGlassButton("joy.cpl", 698, 18, 74, 28, _keycap, _blue, 10);
+            _joyCplBtn.Click += delegate { OpenJoyCpl(); };
+            Controls.Add(_joyCplBtn);
+
+            _firewallBtn = CreateGlassButton("Firewall", 780, 18, 78, 28, _keycap, _textMain, 10);
+            _firewallBtn.Click += delegate { AllowFirewallRule(); };
+            Controls.Add(_firewallBtn);
+
+            // LEFT COLUMN (x=22, w=364)
             // 1. Pairing Code Card
             GlassCardPanel codeCard = new GlassCardPanel
             {
-                Location = new Point(20, 68),
-                Size = new Size(540, 114),
-                CornerRadius = 20
+                Location = new Point(22, 74),
+                Size = new Size(364, 134),
+                CornerRadius = 18,
+                TopAccentBar = _blue
             };
             Controls.Add(codeCard);
 
             Label codeCap = new Label
             {
                 Text = "PAIRING CODE",
-                Font = new Font("Segoe UI", 8.2f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
                 ForeColor = _textMuted,
-                Location = new Point(16, 13),
+                Location = new Point(16, 14),
                 AutoSize = true
             };
             codeCard.Controls.Add(codeCap);
 
-            _copyBtn = CreateGlassButton("Copy", 358, 10, 74, 26, _keycap, _silver, 9);
+            _copyBtn = CreateGlassButton("Copy", 206, 11, 64, 24, _keycap, _silver, 8);
             _copyBtn.Click += delegate
             {
                 try
@@ -2338,7 +2719,7 @@ namespace LinkPadHostApp
             };
             codeCard.Controls.Add(_copyBtn);
 
-            GlassButton newCodeBtn = CreateGlassButton("New Code", 438, 10, 86, 26, _keycap, _textMain, 9);
+            GlassButton newCodeBtn = CreateGlassButton("New Code", 276, 11, 74, 24, _keycap, _textMain, 8);
             newCodeBtn.Click += delegate
             {
                 _codeCopiedActive = false;
@@ -2349,35 +2730,45 @@ namespace LinkPadHostApp
 
             for (int i = 0; i < 6; i++)
             {
-                int xOffset = 16 + i * 84 + (i >= 3 ? 12 : 0);
+                int xOffset = 16 + i * 54 + (i >= 3 ? 10 : 0);
                 _digitBoxes[i] = new CodeDigitTile
                 {
                     Text = "0",
-                    Font = new Font("Consolas", 21f, FontStyle.Bold),
+                    Font = new Font("Consolas", 19f, FontStyle.Bold),
                     DigitColor = _textMain,
                     WellColor = _well,
-                    RimColor = Color.FromArgb(50, 64, 88),
+                    RimColor = Color.FromArgb(48, 62, 88),
                     Location = new Point(xOffset, 44),
-                    Size = new Size(76, 54)
+                    Size = new Size(48, 56)
                 };
                 codeCard.Controls.Add(_digitBoxes[i]);
             }
 
-            // 2. Xbox 360 Virtual Controller Card
+            Label codeHint = new Label
+            {
+                Text = "Enter on LinkPad Android or tap this PC under Auto-Discovery",
+                Font = new Font("Segoe UI", 7.8f),
+                ForeColor = _textMuted,
+                Location = new Point(16, 108),
+                Size = new Size(332, 16)
+            };
+            codeCard.Controls.Add(codeHint);
+
+            // 2. Controller Output & ViGEmBus Card
             GlassCardPanel driverCard = new GlassCardPanel
             {
-                Location = new Point(20, 194),
-                Size = new Size(540, 122),
-                CornerRadius = 20
+                Location = new Point(22, 220),
+                Size = new Size(364, 144),
+                CornerRadius = 18
             };
             Controls.Add(driverCard);
 
             Label drvCap = new Label
             {
-                Text = "XBOX 360 CONTROLLER (XINPUT)",
-                Font = new Font("Segoe UI", 8.2f, FontStyle.Bold),
+                Text = "VIRTUAL GAMEPAD OUTPUT",
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
                 ForeColor = _textMuted,
-                Location = new Point(16, 13),
+                Location = new Point(16, 14),
                 AutoSize = true
             };
             driverCard.Controls.Add(drvCap);
@@ -2385,12 +2776,12 @@ namespace LinkPadHostApp
             _driverBadgePill = new GlassPill
             {
                 Text = "CHECKING",
-                Location = new Point(428, 10),
-                Size = new Size(96, 22),
+                Location = new Point(250, 11),
+                Size = new Size(98, 22),
                 CornerRadius = 10,
-                Font = new Font("Consolas", 7.8f, FontStyle.Bold),
-                FillColor = Color.FromArgb(20, 32, 29),
-                BorderColor = Color.FromArgb(72, 92, 224, 168),
+                Font = new Font("Consolas", 7.5f, FontStyle.Bold),
+                FillColor = Color.FromArgb(16, 30, 26),
+                BorderColor = Color.FromArgb(72, 74, 222, 154),
                 DotColor = _emerald,
                 TextColor = _emerald
             };
@@ -2399,17 +2790,17 @@ namespace LinkPadHostApp
             _driverStatusLabel = new Label
             {
                 Text = "Checking ViGEmBus...",
-                Font = new Font("Segoe UI Semibold", 9.2f),
+                Font = new Font("Segoe UI Semibold", 9.0f),
                 ForeColor = _textMain,
-                Location = new Point(16, 42),
-                Size = new Size(508, 19)
+                Location = new Point(16, 44),
+                Size = new Size(332, 34)
             };
             driverCard.Controls.Add(_driverStatusLabel);
 
             _progressTrack = new Panel
             {
-                Location = new Point(16, 56),
-                Size = new Size(508, 9),
+                Location = new Point(16, 76),
+                Size = new Size(332, 8),
                 BackColor = _well,
                 Visible = false
             };
@@ -2435,7 +2826,7 @@ namespace LinkPadHostApp
                         }
                         else
                         {
-                            int segW = 140;
+                            int segW = 110;
                             int xPos = (int)((_progressTrack.Width + segW) * (_marqueeTick / 140.0)) - segW;
                             Rectangle mr = new Rectangle(xPos, 0, segW, _progressTrack.Height);
                             using (LinearGradientBrush mb = new LinearGradientBrush(mr, _blue, _emerald, 0f))
@@ -2453,73 +2844,90 @@ namespace LinkPadHostApp
             };
             driverCard.Controls.Add(_progressTrack);
 
-            _installDriverBtn = CreateGlassButton("Install Xbox 360 Driver", 16, 76, 190, 32, _amber, Color.FromArgb(14, 18, 26), 10);
-            _installDriverBtn.DisabledBgColor = Color.FromArgb(20, 44, 35);
+            _installDriverBtn = CreateGlassButton("Install Xbox Driver", 16, 94, 174, 34, _amber, Color.FromArgb(14, 18, 26), 10);
+            _installDriverBtn.DisabledBgColor = Color.FromArgb(18, 42, 34);
             _installDriverBtn.DisabledTextColor = _emerald;
-            _installDriverBtn.DisabledBorderColor = Color.FromArgb(56, 150, 112);
+            _installDriverBtn.DisabledBorderColor = Color.FromArgb(52, 146, 108);
             _installDriverBtn.Click += delegate { InstallViGEmDriverAsync(); };
             driverCard.Controls.Add(_installDriverBtn);
 
-            _modeToggleBtn = CreateGlassButton("Use Keyboard", 214, 76, 122, 32, _keycap, _textMain, 10);
-            _modeToggleBtn.Click += delegate
+            _modeSwitch = new SegmentedModeSwitch
             {
-                _keyboardOverride = !_keyboardOverride;
+                Location = new Point(198, 94),
+                Size = new Size(150, 34),
+                Font = new Font("Segoe UI Semibold", 8.4f),
+                KeyboardSelected = _keyboardOverride
+            };
+            _modeSwitch.ModeChanged += delegate
+            {
+                _keyboardOverride = _modeSwitch.KeyboardSelected;
                 _engine.InitBestOutput(_keyboardOverride);
             };
-            driverCard.Controls.Add(_modeToggleBtn);
+            driverCard.Controls.Add(_modeSwitch);
 
-            _joyCplBtn = CreateGlassButton("joy.cpl", 344, 76, 86, 32, _keycap, _blue, 10);
-            _joyCplBtn.Click += delegate { OpenJoyCpl(); };
-            driverCard.Controls.Add(_joyCplBtn);
-
-            _firewallBtn = CreateGlassButton("Firewall", 438, 76, 86, 32, _keycap, _textMain, 10);
-            _firewallBtn.Click += delegate { AllowFirewallRule(); };
-            driverCard.Controls.Add(_firewallBtn);
-
-            // 3. Favorites & Identity Card
+            // 3. Pairing & Identity Preferences Card
             GlassCardPanel trustCard = new GlassCardPanel
             {
-                Location = new Point(20, 328),
-                Size = new Size(540, 122),
-                CornerRadius = 20
+                Location = new Point(22, 376),
+                Size = new Size(364, 162),
+                CornerRadius = 18
             };
             Controls.Add(trustCard);
 
-            _rememberSwitch = new GlassSwitch
+            _trustedCountLabel = new Label
             {
-                Text = "Remember paired phones permanently (Favorites \u00B7 No Code)",
+                Text = "SAVED PHONES \u00B7 0",
+                Font = new Font("Segoe UI", 8.0f, FontStyle.Bold),
+                ForeColor = _textMuted,
+                Location = new Point(16, 14),
+                AutoSize = true
+            };
+            trustCard.Controls.Add(_trustedCountLabel);
+
+            _clearTrustBtn = CreateGlassButton("Clear", 286, 10, 62, 22, Color.FromArgb(42, 22, 28), _crimson, 8);
+            _clearTrustBtn.Font = new Font("Segoe UI Semibold", 7.8f);
+            _clearTrustBtn.BorderColor = Color.FromArgb(108, 48, 58);
+            _clearTrustBtn.DisabledBgColor = Color.FromArgb(20, 25, 34);
+            _clearTrustBtn.DisabledTextColor = Color.FromArgb(88, 98, 116);
+            _clearTrustBtn.DisabledBorderColor = Color.FromArgb(38, 46, 60);
+            _clearTrustBtn.Click += delegate { _engine.ClearTrustedDevices(); };
+            trustCard.Controls.Add(_clearTrustBtn);
+
+            _rememberSwitch = new GlassSwitchRow
+            {
+                Text = "Auto-Trust Paired Phones",
+                Subtitle = "Save verified devices for instant code-free join",
                 Checked = _engine.RememberTrustedDevices,
                 ActiveTrackColor = _blue,
-                TextColor = _textMain,
-                Font = new Font("Segoe UI Semibold", 9.2f),
-                Location = new Point(16, 12),
-                Size = new Size(498, 22)
+                Font = new Font("Segoe UI Semibold", 8.8f),
+                Location = new Point(10, 38),
+                Size = new Size(344, 38)
             };
             _rememberSwitch.CheckedChanged += delegate { _engine.RememberTrustedDevices = _rememberSwitch.Checked; };
             trustCard.Controls.Add(_rememberSwitch);
 
-            _openFavSwitch = new GlassSwitch
+            _openFavSwitch = new GlassSwitchRow
             {
-                Text = "Allow new Favorites without code on this LAN",
+                Text = "Quick LAN Favorite Join",
+                Subtitle = "Allow starred phone favorites without typing code",
                 Checked = _engine.AllowAnyFavoriteWithoutCode,
                 ActiveTrackColor = _emerald,
-                TextColor = _textMuted,
-                Font = new Font("Segoe UI", 9.0f),
-                Location = new Point(16, 38),
-                Size = new Size(410, 22)
+                Font = new Font("Segoe UI Semibold", 8.8f),
+                Location = new Point(10, 77),
+                Size = new Size(344, 38)
             };
             _openFavSwitch.CheckedChanged += delegate { _engine.AllowAnyFavoriteWithoutCode = _openFavSwitch.Checked; };
             trustCard.Controls.Add(_openFavSwitch);
 
-            _uniqueNamesSwitch = new GlassSwitch
+            _uniqueNamesSwitch = new GlassSwitchRow
             {
-                Text = "Unique joy.cpl names (LinkPad P1\u2013P4 · avoids Cosmic Byte)",
+                Text = "LinkPad P1\u2013P4 Naming",
+                Subtitle = "Show LinkPad P1\u2013P4 in joy.cpl instead of generic pad",
                 Checked = _engine.UniqueSlotNames,
                 ActiveTrackColor = _amber,
-                TextColor = _textMain,
-                Font = new Font("Segoe UI", 9.0f),
-                Location = new Point(16, 64),
-                Size = new Size(430, 22)
+                Font = new Font("Segoe UI Semibold", 8.8f),
+                Location = new Point(10, 116),
+                Size = new Size(344, 38)
             };
             _uniqueNamesSwitch.CheckedChanged += delegate
             {
@@ -2528,48 +2936,40 @@ namespace LinkPadHostApp
             };
             trustCard.Controls.Add(_uniqueNamesSwitch);
 
-            _trustedCountLabel = new Label
-            {
-                Text = "0 paired phones remembered",
-                Font = new Font("Consolas", 8.2f),
-                ForeColor = _textMuted,
-                Location = new Point(16, 94),
-                AutoSize = true
-            };
-            trustCard.Controls.Add(_trustedCountLabel);
-
-            _clearTrustBtn = CreateGlassButton("Clear Saved", 434, 89, 90, 25, Color.FromArgb(45, 24, 30), _crimson, 9);
-            _clearTrustBtn.BorderColor = Color.FromArgb(110, 52, 60);
-            _clearTrustBtn.DisabledBgColor = Color.FromArgb(24, 28, 36);
-            _clearTrustBtn.DisabledTextColor = Color.FromArgb(95, 106, 124);
-            _clearTrustBtn.DisabledBorderColor = Color.FromArgb(44, 52, 66);
-            _clearTrustBtn.Click += delegate { _engine.ClearTrustedDevices(); };
-            trustCard.Controls.Add(_clearTrustBtn);
-
-            // 4. Players P1-P4 Bento Grid (2x2)
+            // RIGHT COLUMN (x=402, w=456)
             Label playersHeader = new Label
             {
-                Text = "PLAYERS \u00B7 P1 - P4",
+                Text = "LIVE PLAYER STAGE \u00B7 P1 \u2013 P4",
                 Font = new Font("Segoe UI", 8.2f, FontStyle.Bold),
                 ForeColor = _textMuted,
                 BackColor = Color.Transparent,
-                Location = new Point(22, 462),
+                Location = new Point(404, 76),
                 AutoSize = true
             };
             Controls.Add(playersHeader);
 
+            _connectedCountPill = new GlassPill
+            {
+                Text = "0 / 4 ACTIVE",
+                Location = new Point(756, 73),
+                Size = new Size(102, 22),
+                CornerRadius = 10,
+                Font = new Font("Consolas", 7.6f, FontStyle.Bold),
+                FillColor = _well,
+                BorderColor = Color.FromArgb(46, 58, 80),
+                TextColor = _textMuted
+            };
+            Controls.Add(_connectedCountPill);
+
             for (int i = 0; i < 4; i++)
             {
                 int slot = i + 1;
-                int col = i % 2;
-                int row = i / 2;
-                int cardX = 20 + col * 276;
-                int cardY = 484 + row * 86;
+                int cardY = 104 + i * 111;
 
                 GlassCardPanel pCard = new GlassCardPanel
                 {
-                    Location = new Point(cardX, cardY),
-                    Size = new Size(264, 76),
+                    Location = new Point(402, cardY),
+                    Size = new Size(456, 100),
                     CornerRadius = 16
                 };
                 _slotCards[i] = pCard;
@@ -2578,43 +2978,53 @@ namespace LinkPadHostApp
                 _slotBadges[i] = new GlassPill
                 {
                     Text = "P" + slot,
-                    Location = new Point(12, 12),
-                    Size = new Size(36, 22),
+                    Location = new Point(14, 14),
+                    Size = new Size(36, 24),
                     CornerRadius = 9,
-                    Font = new Font("Consolas", 8.5f, FontStyle.Bold),
+                    Font = new Font("Consolas", 8.6f, FontStyle.Bold),
                     FillColor = _well,
-                    BorderColor = Color.FromArgb(56, 70, 94),
+                    BorderColor = Color.FromArgb(48, 62, 86),
                     TextColor = _slotColors[i]
                 };
                 pCard.Controls.Add(_slotBadges[i]);
 
-                _kickBtns[i] = CreateGlassButton("Kick", 198, 11, 54, 23, Color.FromArgb(48, 24, 30), _crimson, 8);
-                _kickBtns[i].BorderColor = Color.FromArgb(115, 52, 60);
-                _kickBtns[i].Visible = false;
-                _kickBtns[i].Click += delegate { _engine.KickPlayer(slot); };
-                pCard.Controls.Add(_kickBtns[i]);
-
                 _slotTitles[i] = new Label
                 {
-                    Text = "Waiting",
-                    Font = new Font("Segoe UI Semibold", 9.0f),
+                    Text = "Open Slot",
+                    Font = new Font("Segoe UI Semibold", 10.2f),
                     ForeColor = _textMuted,
-                    Location = new Point(56, 13),
-                    Size = new Size(138, 20),
+                    Location = new Point(58, 14),
+                    Size = new Size(172, 22),
                     AutoEllipsis = true
                 };
                 pCard.Controls.Add(_slotTitles[i]);
 
                 _slotMasks[i] = new Label
                 {
-                    Text = "Waiting for phone",
+                    Text = "Connect via Pairing Code or Saved Favorite",
                     Font = new Font("Consolas", 8.0f),
                     ForeColor = _textMuted,
-                    Location = new Point(14, 44),
-                    Size = new Size(236, 18),
+                    Location = new Point(14, 48),
+                    Size = new Size(262, 36),
                     AutoEllipsis = true
                 };
                 pCard.Controls.Add(_slotMasks[i]);
+
+                _kickBtns[i] = CreateGlassButton("Kick", 230, 14, 48, 24, Color.FromArgb(46, 23, 30), _crimson, 8);
+                _kickBtns[i].Font = new Font("Segoe UI Semibold", 7.8f);
+                _kickBtns[i].BorderColor = Color.FromArgb(115, 50, 60);
+                _kickBtns[i].Visible = false;
+                _kickBtns[i].Click += delegate { _engine.KickPlayer(slot); };
+                pCard.Controls.Add(_kickBtns[i]);
+
+                _slotVisuals[i] = new MiniGamepadVisualizer
+                {
+                    Location = new Point(288, 16),
+                    Size = new Size(154, 68),
+                    AccentColor = _slotColors[i],
+                    IsActive = false
+                };
+                pCard.Controls.Add(_slotVisuals[i]);
             }
         }
 
@@ -2628,18 +3038,36 @@ namespace LinkPadHostApp
                 CornerRadius = radius,
                 BgColor = bg,
                 TextColor = fg,
-                BorderColor = Color.FromArgb(62, 76, 100),
-                Font = new Font("Segoe UI Semibold", 8.5f)
+                BorderColor = Color.FromArgb(60, 74, 98),
+                Font = new Font("Segoe UI Semibold", 8.4f)
             };
         }
 
         private void RefreshUi()
         {
             string ip = HostEngine.GetPrimaryLocalIpv4();
-            if (!_ipCopiedActive)
+            if (_ipCopiedActive)
+            {
+                _ipPill.Text = "IP Copied (" + ip + ")";
+                _ipPill.TextColor = _emerald;
+                _ipPill.BorderColor = Color.FromArgb(80, 74, 222, 154);
+                _ipPill.EyeOpen = true;
+            }
+            else if (_ipRevealed)
             {
                 _ipPill.Text = ip + ":" + Protocol.HOST_UDP_PORT;
+                _ipPill.TextColor = _blue;
+                _ipPill.BorderColor = Color.FromArgb(80, 110, 168, 254);
+                _ipPill.EyeOpen = true;
             }
+            else
+            {
+                _ipPill.Text = "\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022 :" + Protocol.HOST_UDP_PORT;
+                _ipPill.TextColor = _silver;
+                _ipPill.BorderColor = Color.FromArgb(50, 64, 88);
+                _ipPill.EyeOpen = false;
+            }
+            _ipPill.Invalidate();
 
             string code = _engine.PairingCode;
             for (int i = 0; i < 6 && i < code.Length; i++)
@@ -2649,56 +3077,54 @@ namespace LinkPadHostApp
             _ppsPill.Text = _engine.PacketsPerSecond + " pkt/s";
 
             int tc = _engine.TrustedCount;
-            _trustedCountLabel.Text = tc == 0 ? "No saved phones yet" : (tc + " paired phone" + (tc == 1 ? "" : "s") + " remembered");
+            _trustedCountLabel.Text = "SAVED PHONES \u00B7 " + tc;
             _clearTrustBtn.Enabled = tc > 0;
+            _modeSwitch.KeyboardSelected = _keyboardOverride;
 
             if (_installingDriver)
             {
                 if (!_animTimer.Enabled) _animTimer.Start();
-                string stepText = string.IsNullOrEmpty(_installProgressText) ? "Installing..." : _installProgressText;
+                string stepText = string.IsNullOrEmpty(_installProgressText) ? "Installing ViGEmBus..." : _installProgressText;
                 _driverBadgePill.Text = "INSTALLING";
                 _driverBadgePill.DotColor = _amber;
                 _driverBadgePill.TextColor = _amber;
-                _driverBadgePill.BorderColor = Color.FromArgb(80, 229, 184, 105);
+                _driverBadgePill.BorderColor = Color.FromArgb(80, 240, 184, 91);
                 _driverStatusLabel.Text = stepText;
                 _driverStatusLabel.ForeColor = _amber;
-                _driverStatusLabel.Location = new Point(16, 33);
                 _progressTrack.Visible = true;
                 _installDriverBtn.Text = _installPercent >= 0 ? ("Installing " + _installPercent + "%") : "Installing...";
                 _installDriverBtn.Enabled = false;
-                _installDriverBtn.DisabledBgColor = Color.FromArgb(44, 38, 22);
+                _installDriverBtn.DisabledBgColor = Color.FromArgb(44, 36, 20);
                 _installDriverBtn.DisabledTextColor = _amber;
                 _installDriverBtn.DisabledBorderColor = Color.FromArgb(120, 96, 48);
             }
             else if (_engine.IsXboxActive)
             {
-                if (_animTimer.Enabled && !_ipCopiedActive && !_codeCopiedActive) _animTimer.Stop();
+                if (_animTimer.Enabled && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive) _animTimer.Stop();
                 _driverBadgePill.Text = "XINPUT OK";
                 _driverBadgePill.DotColor = _emerald;
                 _driverBadgePill.TextColor = _emerald;
-                _driverBadgePill.BorderColor = Color.FromArgb(72, 92, 224, 168);
+                _driverBadgePill.BorderColor = Color.FromArgb(72, 74, 222, 154);
                 _driverStatusLabel.Text = _engine.UniqueSlotNames
-                    ? "LinkPad P1\u2013P4 Virtual Controllers Active \u00B7 Open joy.cpl"
-                    : "LinkPad Controller (XInput) Active \u00B7 Open joy.cpl";
+                    ? "Virtual Xbox 360 pads active as LinkPad P1\u2013P4"
+                    : "Virtual Xbox 360 controllers active in XInput mode";
                 _driverStatusLabel.ForeColor = _emerald;
-                _driverStatusLabel.Location = new Point(16, 42);
                 _progressTrack.Visible = false;
                 _installDriverBtn.Text = "Xbox Driver Ready";
                 _installDriverBtn.Enabled = false;
-                _installDriverBtn.DisabledBgColor = Color.FromArgb(19, 44, 35);
+                _installDriverBtn.DisabledBgColor = Color.FromArgb(18, 42, 34);
                 _installDriverBtn.DisabledTextColor = _emerald;
-                _installDriverBtn.DisabledBorderColor = Color.FromArgb(56, 150, 112);
+                _installDriverBtn.DisabledBorderColor = Color.FromArgb(52, 146, 108);
             }
             else if (_keyboardOverride)
             {
-                if (_animTimer.Enabled && !_ipCopiedActive && !_codeCopiedActive) _animTimer.Stop();
+                if (_animTimer.Enabled && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive) _animTimer.Stop();
                 _driverBadgePill.Text = "KEYBOARD";
                 _driverBadgePill.DotColor = _blue;
                 _driverBadgePill.TextColor = _blue;
-                _driverBadgePill.BorderColor = Color.FromArgb(72, 124, 178, 255);
-                _driverStatusLabel.Text = "Keyboard Mode (WASD / Arrows / IJKL / Numpad)";
+                _driverBadgePill.BorderColor = Color.FromArgb(72, 110, 168, 254);
+                _driverStatusLabel.Text = "Keyboard Scancode Mode (WASD / Arrows / IJKL / Numpad)";
                 _driverStatusLabel.ForeColor = _blue;
-                _driverStatusLabel.Location = new Point(16, 42);
                 _progressTrack.Visible = false;
                 _installDriverBtn.Text = "Retry Xbox Driver";
                 _installDriverBtn.Enabled = true;
@@ -2707,18 +3133,17 @@ namespace LinkPadHostApp
             }
             else
             {
-                if (_animTimer.Enabled && !_ipCopiedActive && !_codeCopiedActive) _animTimer.Stop();
+                if (_animTimer.Enabled && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive) _animTimer.Stop();
                 _driverBadgePill.Text = "REQUIRED";
                 _driverBadgePill.DotColor = _amber;
                 _driverBadgePill.TextColor = _amber;
-                _driverBadgePill.BorderColor = Color.FromArgb(80, 229, 184, 105);
+                _driverBadgePill.BorderColor = Color.FromArgb(80, 240, 184, 91);
                 _driverStatusLabel.Text = string.IsNullOrEmpty(_engine.LastStatusError)
-                    ? "Click Install Xbox 360 Driver to register controllers in Windows"
+                    ? "Install ViGEmBus driver for Xbox 360 support, or switch to Keyboard"
                     : _engine.LastStatusError;
                 _driverStatusLabel.ForeColor = _amber;
-                _driverStatusLabel.Location = new Point(16, 42);
                 _progressTrack.Visible = false;
-                _installDriverBtn.Text = "Install Xbox 360 Driver";
+                _installDriverBtn.Text = "Install Xbox Driver";
                 _installDriverBtn.Enabled = true;
                 _installDriverBtn.BgColor = _amber;
                 _installDriverBtn.TextColor = Color.FromArgb(14, 18, 26);
@@ -2726,42 +3151,53 @@ namespace LinkPadHostApp
 
             _driverBadgePill.Invalidate();
             _progressTrack.Invalidate();
-            _modeToggleBtn.Text = _keyboardOverride ? "Use Xbox 360" : "Use Keyboard";
 
             PlayerSlotState[] slots = _engine.GetSlotsSnapshot();
+            int activeCount = 0;
             for (int i = 0; i < 4; i++)
             {
                 PlayerSlotState s = slots[i];
                 if (s.Connected)
                 {
-                    string rtt = s.RttMs > 0 ? (s.RttMs + "ms") : "LAN";
+                    activeCount++;
+                    string rtt = s.RttMs > 0 ? (s.RttMs + " ms") : "LAN";
                     string trustTag = s.IsTrusted ? " \u00B7 Saved" : "";
-                    _slotTitles[i].Text = string.Format("{0} ({1}{2})", s.DeviceName, rtt, trustTag);
+                    _slotTitles[i].Text = s.DeviceName;
                     _slotTitles[i].ForeColor = _textMain;
-                    _slotTitles[i].Size = new Size(138, 20);
-                    _slotMasks[i].Text = Protocol.MaskToText(s.ButtonMask, s.Layout, s.Lx, s.Ly, s.Rx, s.Ry);
+                    _slotTitles[i].Size = new Size(168, 22);
+                    _slotMasks[i].Text = string.Format("{0}{1}\n{2}",
+                        rtt, trustTag, Protocol.MaskToText(s.ButtonMask, s.Layout, s.Lx, s.Ly, s.Rx, s.Ry));
                     _slotMasks[i].ForeColor = _slotColors[i];
                     _slotBadges[i].BorderColor = _slotColors[i];
                     _slotCards[i].AccentBorder = _slotColors[i];
+                    _slotCards[i].TopAccentBar = _slotColors[i];
                     _slotCards[i].Invalidate();
                     _slotBadges[i].Invalidate();
+                    _slotVisuals[i].UpdateInput(true, _slotColors[i], s.ButtonMask, s.Lx, s.Ly, s.Rx, s.Ry);
                     _kickBtns[i].Visible = true;
                 }
                 else
                 {
                     bool p1Ready = (i == 0 && _engine.IsXboxActive);
-                    _slotTitles[i].Text = p1Ready ? (_engine.UniqueSlotNames ? "LinkPad P1" : "LinkPad Controller") : "Waiting";
+                    _slotTitles[i].Text = p1Ready ? (_engine.UniqueSlotNames ? "LinkPad P1" : "LinkPad Controller") : ("Slot P" + (i + 1) + " Open");
                     _slotTitles[i].ForeColor = p1Ready ? _silver : _textMuted;
-                    _slotTitles[i].Size = new Size(192, 20);
-                    _slotMasks[i].Text = p1Ready ? "Plugged in Windows (joy.cpl)" : "Connect phone via code or LAN";
-                    _slotMasks[i].ForeColor = p1Ready ? _emerald : _textMuted;
-                    _slotBadges[i].BorderColor = p1Ready ? _emerald : Color.FromArgb(56, 70, 94);
+                    _slotTitles[i].Size = new Size(218, 22);
+                    _slotMasks[i].Text = p1Ready ? "Ready in Windows (joy.cpl)\nWaiting for Android controller..." : "Standby\nEnter Pairing Code or use Saved Favorite";
+                    _slotMasks[i].ForeColor = p1Ready ? _emerald : Color.FromArgb(98, 110, 132);
+                    _slotBadges[i].BorderColor = p1Ready ? _emerald : Color.FromArgb(48, 62, 86);
                     _slotCards[i].AccentBorder = Color.Empty;
+                    _slotCards[i].TopAccentBar = p1Ready ? Color.FromArgb(100, _emerald) : Color.Empty;
                     _slotCards[i].Invalidate();
                     _slotBadges[i].Invalidate();
+                    _slotVisuals[i].UpdateInput(false, _slotColors[i], 0, 0, 0, 0, 0);
                     _kickBtns[i].Visible = false;
                 }
             }
+
+            _connectedCountPill.Text = activeCount + " / 4 ACTIVE";
+            _connectedCountPill.TextColor = activeCount > 0 ? _emerald : _textMuted;
+            _connectedCountPill.BorderColor = activeCount > 0 ? Color.FromArgb(72, 74, 222, 154) : Color.FromArgb(46, 58, 80);
+            _connectedCountPill.Invalidate();
         }
 
         private void OpenJoyCpl()
@@ -2991,10 +3427,10 @@ namespace LinkPadHostApp
                 object rule = Activator.CreateInstance(ruleType);
                 ruleType.InvokeMember("Name", BindingFlags.SetProperty, null, rule, new object[] { ruleName });
                 ruleType.InvokeMember("Description", BindingFlags.SetProperty, null, rule, new object[] { "Allow LinkPad LAN Gamepad UDP discovery & input" });
-                ruleType.InvokeMember("Protocol", BindingFlags.SetProperty, null, rule, new object[] { 17 }); // NET_FW_IP_PROTOCOL_UDP
+                ruleType.InvokeMember("Protocol", BindingFlags.SetProperty, null, rule, new object[] { 17 });
                 ruleType.InvokeMember("LocalPorts", BindingFlags.SetProperty, null, rule, new object[] { "47850-47851" });
-                ruleType.InvokeMember("Direction", BindingFlags.SetProperty, null, rule, new object[] { 1 }); // NET_FW_RULE_DIR_IN
-                ruleType.InvokeMember("Action", BindingFlags.SetProperty, null, rule, new object[] { 1 }); // NET_FW_ACTION_ALLOW
+                ruleType.InvokeMember("Direction", BindingFlags.SetProperty, null, rule, new object[] { 1 });
+                ruleType.InvokeMember("Action", BindingFlags.SetProperty, null, rule, new object[] { 1 });
                 ruleType.InvokeMember("Profiles", BindingFlags.SetProperty, null, rule, new object[] { int.MaxValue });
                 ruleType.InvokeMember("Enabled", BindingFlags.SetProperty, null, rule, new object[] { true });
 

@@ -27,8 +27,13 @@ jobs:
       - name: Accept Android SDK licenses
         shell: bash
         run: |
-          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          if [ -n "${ANDROID_HOME:-}" ]; then
+            mkdir -p "$ANDROID_HOME/licenses"
+            printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1)
+            if [ -n "$SDKMGR" ]; then
+              yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+            fi
           fi
 
       - name: Ensure debug keystore
@@ -66,8 +71,11 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore & Build LinkPadHost.exe (.NET 4.8)
-        run: msbuild pc-host\LinkPadHost.csproj /t:Restore,Build /p:Configuration=Release /v:minimal
+      - name: Restore NuGet Packages (SDK-style)
+        run: msbuild pc-host\LinkPadHost.csproj /t:Restore /v:minimal
+
+      - name: Build LinkPadHost.exe (.NET 4.8 Release)
+        run: msbuild pc-host\LinkPadHost.csproj /t:Build /p:Configuration=Release /v:minimal
 
       - name: Build LinkPadHostSetup.exe
         shell: pwsh
