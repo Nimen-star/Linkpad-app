@@ -81,7 +81,7 @@ jobs:
         run: nuget restore pc-host/LinkPadHost.csproj
 
       - name: Build PC Host solution
-        run: msbuild pc-host/LinkPadHost.csproj /p:Configuration=Release /p:Platform="Any CPU"
+        run: msbuild pc-host/LinkPadHost.csproj /p:Configuration=Release /p:OutputPath="bin\Release\net48\"
 
       - name: Setup Inno Setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
