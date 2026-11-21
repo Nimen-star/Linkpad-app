@@ -9,12 +9,17 @@ import android.bluetooth.BluetoothHidDeviceAppQosSettings
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
+import androidx.core.content.ContextCompat
 import com.example.protocol.PadButton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.Locale
 import java.util.concurrent.Executors
 
 sealed class BluetoothHidState {
@@ -40,6 +45,13 @@ data class HidPairedTarget(
     val role: HidTargetRole = HidTargetRole.OTHER
 )
 
+data class HidDiscoveredDevice(
+    val name: String,
+    val address: String,
+    val role: HidTargetRole,
+    val bonded: Boolean
+)
+
 /**
  * Registers the Android device as a standards-compliant Bluetooth HID Hardware Gamepad (API 28+).
  * Target Android TVs, Android phones, Windows PCs, and Web Gamepad API browsers recognize it
@@ -51,6 +63,12 @@ class BluetoothHidController(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) BluetoothHidState.Idle else BluetoothHidState.Unsupported
     )
     val state: StateFlow<BluetoothHidState> = _state.asStateFlow()
+
+    private val _nearbyDevices = MutableStateFlow<List<HidDiscoveredDevice>>(emptyList())
+    val nearbyDevices: StateFlow<List<HidDiscoveredDevice>> = _nearbyDevices.asStateFlow()
+
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     private val executor = Executors.newSingleThreadExecutor()
     private val adapter: BluetoothAdapter?
@@ -67,7 +85,15 @@ class BluetoothHidController(private val context: Context) {
     @Volatile
     private var userInitiatedTargetAddress: String? = null
     @Volatile
+    private var pendingBondConnectAddress: String? = null
+    @Volatile
     private var hostModeBlocking = false
+    @Volatile
+    private var advertisedDeviceName: String = "LinkPad Controller"
+    @Volatile
+    private var triedFallbackWithoutQos = false
+
+    private var btReceiver: BroadcastReceiver? = null
 
     @Volatile
     private var lastReportBytes: ByteArray = DEFAULT_REPORT_BYTES.copyOf()
@@ -82,7 +108,8 @@ class BluetoothHidController(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun startRegistration() {
+    fun startRegistration(deviceName: String = advertisedDeviceName) {
+        advertisedDeviceName = deviceName.trim().ifBlank { "LinkPad Controller" }.take(28)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             _state.value = BluetoothHidState.Unsupported
             return
@@ -101,15 +128,21 @@ class BluetoothHidController(private val context: Context) {
             return
         }
 
+        ensureReceiverRegistered()
         armedByUser = true
         if (hidProxy != null && appRegistered) {
             refreshStateFromProxy()
+            val pendingMac = userInitiatedTargetAddress
+            if (!pendingMac.isNullOrBlank() && connectedHost == null) {
+                connectByMacAddress(pendingMac)
+            }
             return
         }
 
+        triedFallbackWithoutQos = false
         _state.value = BluetoothHidState.Registering
-        btAdapter.getProfileProxy(
-            context,
+        val requested = btAdapter.getProfileProxy(
+            context.applicationContext,
             object : BluetoothProfile.ServiceListener {
                 override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
                     if (profile != BluetoothProfile.HID_DEVICE || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
@@ -123,6 +156,7 @@ class BluetoothHidController(private val context: Context) {
                         hidProxy = null
                         connectedHost = null
                         userInitiatedTargetAddress = null
+                        pendingBondConnectAddress = null
                         appRegistered = false
                         _state.value = BluetoothHidState.Idle
                     }
@@ -130,13 +164,18 @@ class BluetoothHidController(private val context: Context) {
             },
             BluetoothProfile.HID_DEVICE
         )
+        if (!requested) {
+            _state.value = BluetoothHidState.Error(
+                "Android rejected the Bluetooth HID profile request on this device."
+            )
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun registerApp(hid: BluetoothHidDevice) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
         val sdp = BluetoothHidDeviceAppSdpSettings(
-            "LinkPad Controller",
+            advertisedDeviceName,
             "LinkPad Hardware Bluetooth Gamepad",
             "LinkPad",
             BluetoothHidDevice.SUBCLASS2_GAMEPAD,
@@ -154,17 +193,32 @@ class BluetoothHidController(private val context: Context) {
 
         val callback = object : BluetoothHidDevice.Callback() {
             override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
-                appRegistered = registered
                 if (!registered) {
+                    if (!triedFallbackWithoutQos) {
+                        triedFallbackWithoutQos = true
+                        val fallbackOk = runCatching {
+                            hid.registerApp(sdp, null, null, executor, this)
+                        }.getOrDefault(false)
+                        if (fallbackOk) return
+                    }
+                    appRegistered = false
                     connectedHost = null
                     userInitiatedTargetAddress = null
-                    _state.value = BluetoothHidState.Error("Bluetooth HID Gamepad profile unavailable on this device.")
+                    pendingBondConnectAddress = null
+                    _state.value = BluetoothHidState.Error(
+                        "Bluetooth HID Gamepad profile unavailable on this device. Toggle Bluetooth off/on or tap Make Discoverable."
+                    )
                 } else {
+                    appRegistered = true
                     if (pluggedDevice != null && shouldAcceptConnection(pluggedDevice)) {
                         connectedHost = pluggedDevice
                         sendNeutralReportAsync(hid, pluggedDevice)
                     }
                     refreshStateFromProxy()
+                    val pendingMac = pendingBondConnectAddress ?: userInitiatedTargetAddress
+                    if (!pendingMac.isNullOrBlank() && connectedHost == null) {
+                        connectByMacAddress(pendingMac)
+                    }
                 }
             }
 
@@ -172,13 +226,13 @@ class BluetoothHidController(private val context: Context) {
                 when (connState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         if (device == null || !shouldAcceptConnection(device)) {
-                            // Guard against unsolicited phone-to-phone mutual HID connections without user initiation
                             if (device != null && LinkPadConstants.hasBluetoothConnectPermission(context)) {
                                 executor.execute { runCatching { hid.disconnect(device) } }
                             }
                             return
                         }
                         connectedHost = device
+                        pendingBondConnectAddress = null
                         lastReportBytes = DEFAULT_REPORT_BYTES.copyOf()
                         sendNeutralReportAsync(hid, device)
                         val name = runCatching { device.name }.getOrNull().orEmpty()
@@ -240,12 +294,23 @@ class BluetoothHidController(private val context: Context) {
             }
         }
 
-        val ok = runCatching {
+        // Some vendor Bluetooth stacks (e.g. MIUI / ColorOS / older Samsung firmware) reject non-null QoS;
+        // try strict gaming QoS first and automatically retry with default (null, null) QoS if rejected.
+        var ok = runCatching {
             hid.registerApp(sdp, null, outQos, executor, callback)
         }.getOrDefault(false)
 
+        if (!ok && !triedFallbackWithoutQos) {
+            triedFallbackWithoutQos = true
+            ok = runCatching {
+                hid.registerApp(sdp, null, null, executor, callback)
+            }.getOrDefault(false)
+        }
+
         if (!ok) {
-            _state.value = BluetoothHidState.Error("Could not register Bluetooth HID profile.")
+            _state.value = BluetoothHidState.Error(
+                "Could not register Bluetooth HID profile on this device."
+            )
         }
     }
 
@@ -253,9 +318,9 @@ class BluetoothHidController(private val context: Context) {
     private fun shouldAcceptConnection(device: BluetoothDevice): Boolean {
         if (hostModeBlocking || !armedByUser) return false
         val addr = device.address
-        if (addr != null && addr == userInitiatedTargetAddress) return true
-        // Only allow unsolicited incoming HID Host connections from non-phone devices (TV, PC, console)
-        // so two phones running LinkPad don't silently lock each other into controller-to-controller mode.
+        if (addr != null && (addr == userInitiatedTargetAddress || addr == pendingBondConnectAddress)) {
+            return true
+        }
         val role = classifyDeviceRole(device)
         return role != HidTargetRole.PHONE
     }
@@ -263,6 +328,42 @@ class BluetoothHidController(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun refreshStateFromProxy() {
         if (hostModeBlocking) return
+        val hasConnPerm = LinkPadConstants.hasBluetoothConnectPermission(context)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && hasConnPerm && appRegistered) {
+            val hid = hidProxy
+            if (hid != null && connectedHost == null) {
+                val activeDevices = runCatching {
+                    hid.getDevicesMatchingConnectionStates(
+                        intArrayOf(BluetoothProfile.STATE_CONNECTED, BluetoothProfile.STATE_CONNECTING)
+                    )
+                }.getOrDefault(emptyList())
+
+                val connected = activeDevices.firstOrNull { dev ->
+                    hid.getConnectionState(dev) == BluetoothProfile.STATE_CONNECTED && shouldAcceptConnection(dev)
+                }
+                if (connected != null) {
+                    connectedHost = connected
+                    lastReportBytes = DEFAULT_REPORT_BYTES.copyOf()
+                    sendNeutralReportAsync(hid, connected)
+                    val name = runCatching { connected.name }.getOrNull().orEmpty()
+                        .ifBlank { connected.address }
+                    _state.value = BluetoothHidState.Connected(name, connected.address)
+                    return
+                }
+
+                val connecting = activeDevices.firstOrNull { dev ->
+                    hid.getConnectionState(dev) == BluetoothProfile.STATE_CONNECTING && shouldAcceptConnection(dev)
+                }
+                if (connecting != null) {
+                    val name = runCatching { connecting.name }.getOrNull().orEmpty()
+                        .ifBlank { connecting.address }
+                    _state.value = BluetoothHidState.Connecting(name)
+                    return
+                }
+            }
+        }
+
         val currentHost = connectedHost
         if (currentHost != null) {
             val name = runCatching { currentHost.name }.getOrNull().orEmpty()
@@ -270,7 +371,8 @@ class BluetoothHidController(private val context: Context) {
             _state.value = BluetoothHidState.Connected(name, currentHost.address)
             return
         }
-        val targets = if (LinkPadConstants.hasBluetoothConnectPermission(context)) {
+
+        val targets = if (hasConnPerm) {
             runCatching {
                 adapter?.bondedDevices.orEmpty().map { dev ->
                     HidPairedTarget(
@@ -280,7 +382,7 @@ class BluetoothHidController(private val context: Context) {
                     )
                 }.sortedWith(
                     compareBy<HidPairedTarget> { it.role == HidTargetRole.PHONE }
-                        .thenBy { it.name.lowercase() }
+                        .thenBy { it.name.lowercase(Locale.US) }
                 )
             }.getOrDefault(emptyList())
         } else {
@@ -290,6 +392,108 @@ class BluetoothHidController(private val context: Context) {
             BluetoothHidState.Ready(targets)
         } else {
             BluetoothHidState.Idle
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startNearbyScan() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        if (!LinkPadConstants.hasBluetoothConnectPermission(context) ||
+            !LinkPadConstants.hasBluetoothScanPermission(context)
+        ) {
+            _state.value = BluetoothHidState.Error("Grant Bluetooth permissions to scan nearby TVs or PCs.")
+            return
+        }
+        val btAdapter = adapter ?: return
+        if (!btAdapter.isEnabled) {
+            _state.value = BluetoothHidState.Error("Enable Bluetooth before scanning.")
+            return
+        }
+        ensureReceiverRegistered()
+        _nearbyDevices.value = emptyList()
+        runCatching {
+            if (btAdapter.isDiscovering) btAdapter.cancelDiscovery()
+            val started = btAdapter.startDiscovery()
+            _isScanning.value = started
+        }.onFailure {
+            _isScanning.value = false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopNearbyScan() {
+        _isScanning.value = false
+        if (LinkPadConstants.hasBluetoothScanPermission(context)) {
+            runCatching {
+                if (adapter?.isDiscovering == true) adapter?.cancelDiscovery()
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectByMacAddress(rawMac: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        if (hostModeBlocking) {
+            _state.value = BluetoothHidState.Error("Stop Host Mode before connecting Bluetooth OS Gamepad.")
+            return
+        }
+        if (!LinkPadConstants.hasBluetoothConnectPermission(context)) {
+            _state.value = BluetoothHidState.Error("Grant Bluetooth permission first.")
+            return
+        }
+        val normalized = normalizeMacAddress(rawMac)
+        if (!BluetoothAdapter.checkBluetoothAddress(normalized)) {
+            _state.value = BluetoothHidState.Error(
+                "Invalid Bluetooth MAC address. Use format AA:BB:CC:DD:EE:FF."
+            )
+            return
+        }
+        val btAdapter = adapter
+        if (btAdapter == null || !btAdapter.isEnabled) {
+            _state.value = BluetoothHidState.Error("Enable Bluetooth first.")
+            return
+        }
+
+        ensureReceiverRegistered()
+        stopNearbyScan()
+        armedByUser = true
+        userInitiatedTargetAddress = normalized
+
+        val hid = hidProxy
+        if (hid == null || !appRegistered) {
+            startRegistration(advertisedDeviceName)
+            return
+        }
+
+        runCatching {
+            val device = btAdapter.getRemoteDevice(normalized)
+            val name = device.name?.takeIf { it.isNotBlank() } ?: normalized
+            when (device.bondState) {
+                BluetoothDevice.BOND_BONDED -> {
+                    pendingBondConnectAddress = null
+                    connectToTarget(normalized)
+                }
+                BluetoothDevice.BOND_BONDING -> {
+                    pendingBondConnectAddress = normalized
+                    _state.value = BluetoothHidState.Connecting("Pairing with $name...")
+                }
+                else -> {
+                    pendingBondConnectAddress = normalized
+                    _state.value = BluetoothHidState.Connecting("Pairing with $name...")
+                    val bondStarted = device.createBond()
+                    if (!bondStarted) {
+                        pendingBondConnectAddress = null
+                        userInitiatedTargetAddress = null
+                        _state.value = BluetoothHidState.Error(
+                            "Could not initiate bonding with $normalized. Tap Make Discoverable and pair from the TV/PC Bluetooth menu."
+                        )
+                    }
+                }
+            }
+        }.onFailure { err ->
+            pendingBondConnectAddress = null
+            userInitiatedTargetAddress = null
+            _state.value = BluetoothHidState.Error(err.message ?: "Bluetooth MAC connect failed.")
         }
     }
 
@@ -304,12 +508,13 @@ class BluetoothHidController(private val context: Context) {
         val btAdapter = adapter
         if (hid == null || btAdapter == null || !appRegistered) {
             userInitiatedTargetAddress = address
-            startRegistration()
+            startRegistration(advertisedDeviceName)
             return
         }
         if (!LinkPadConstants.hasBluetoothConnectPermission(context)) return
 
         runCatching {
+            stopNearbyScan()
             val device = btAdapter.getRemoteDevice(address)
             val name = device.name?.takeIf { it.isNotBlank() } ?: address
             armedByUser = true
@@ -319,7 +524,7 @@ class BluetoothHidController(private val context: Context) {
             if (!started) {
                 userInitiatedTargetAddress = null
                 _state.value = BluetoothHidState.Error(
-                    "Could not initiate HID link to $name. Pair from Bluetooth Settings first or connect from the target TV/PC."
+                    "Could not initiate HID link to $name. Tap Make Discoverable and select ${advertisedDeviceName} on your TV/PC."
                 )
             }
         }.onFailure { err ->
@@ -334,6 +539,7 @@ class BluetoothHidController(private val context: Context) {
         val hid = hidProxy
         val host = connectedHost
         userInitiatedTargetAddress = null
+        pendingBondConnectAddress = null
         connectedHost = null
         lastReportBytes = DEFAULT_REPORT_BYTES.copyOf()
         if (hid != null && host != null && LinkPadConstants.hasBluetoothConnectPermission(context)) {
@@ -372,6 +578,9 @@ class BluetoothHidController(private val context: Context) {
     fun stop() {
         armedByUser = false
         userInitiatedTargetAddress = null
+        pendingBondConnectAddress = null
+        stopNearbyScan()
+        unregisterReceiver()
         val prevHost = connectedHost
         connectedHost = null
         lastReportBytes = DEFAULT_REPORT_BYTES.copyOf()
@@ -393,6 +602,89 @@ class BluetoothHidController(private val context: Context) {
         hidProxy = null
         appRegistered = false
         _state.value = if (isSupported()) BluetoothHidState.Idle else BluetoothHidState.Unsupported
+    }
+
+    private fun ensureReceiverRegistered() {
+        if (btReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            @SuppressLint("MissingPermission")
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    BluetoothDevice.ACTION_FOUND -> {
+                        val device = getParcelableDevice(intent) ?: return
+                        val addr = device.address ?: return
+                        val name = runCatching { device.name }.getOrNull().orEmpty().ifBlank { addr }
+                        val role = classifyDeviceRole(device)
+                        val bonded = runCatching { device.bondState == BluetoothDevice.BOND_BONDED }.getOrDefault(false)
+                        val updated = _nearbyDevices.value.filterNot { it.address == addr } +
+                            HidDiscoveredDevice(name = name, address = addr, role = role, bonded = bonded)
+                        _nearbyDevices.value = updated.sortedWith(
+                            compareBy<HidDiscoveredDevice> { it.role == HidTargetRole.PHONE }
+                                .thenBy { it.name.lowercase(Locale.US) }
+                        )
+                    }
+                    BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                        _isScanning.value = false
+                    }
+                    BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                        val device = getParcelableDevice(intent) ?: return
+                        val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+                        val prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE)
+                        val addr = device.address ?: return
+                        if (bondState == BluetoothDevice.BOND_BONDED) {
+                            _nearbyDevices.value = _nearbyDevices.value.map {
+                                if (it.address == addr) it.copy(bonded = true) else it
+                            }
+                            if (pendingBondConnectAddress == addr) {
+                                pendingBondConnectAddress = null
+                                connectToTarget(addr)
+                            } else {
+                                refreshStateFromProxy()
+                            }
+                        } else if (bondState == BluetoothDevice.BOND_NONE &&
+                            prevState == BluetoothDevice.BOND_BONDING &&
+                            pendingBondConnectAddress == addr
+                        ) {
+                            pendingBondConnectAddress = null
+                            userInitiatedTargetAddress = null
+                            val name = runCatching { device.name }.getOrNull().orEmpty().ifBlank { addr }
+                            _state.value = BluetoothHidState.Error(
+                                "Pairing with $name did not complete. Make sure the target TV/PC accepted pairing."
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        }
+        runCatching {
+            ContextCompat.registerReceiver(
+                context.applicationContext,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            btReceiver = receiver
+        }
+    }
+
+    private fun unregisterReceiver() {
+        val receiver = btReceiver ?: return
+        runCatching { context.applicationContext.unregisterReceiver(receiver) }
+        btReceiver = null
+    }
+
+    private fun getParcelableDevice(intent: Intent): BluetoothDevice? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -419,6 +711,16 @@ class BluetoothHidController(private val context: Context) {
 
         // Neutral 7-byte payload (buttons = 0, hat = 0, axes = 128 center)
         val DEFAULT_REPORT_BYTES = byteArrayOf(0, 0, 0, 128.toByte(), 128.toByte(), 128.toByte(), 128.toByte())
+
+        fun normalizeMacAddress(input: String): String {
+            val cleaned = input.trim().uppercase(Locale.US).replace("-", ":")
+            val hexOnly = cleaned.replace(":", "")
+            return if (hexOnly.length == 12 && hexOnly.all { it in '0'..'9' || it in 'A'..'F' }) {
+                hexOnly.chunked(2).joinToString(":")
+            } else {
+                cleaned
+            }
+        }
 
         /**
          * Maps internal [PadButton] bits into Linux/Android standard BTN_GAMEPAD HID usage indices (1..16):

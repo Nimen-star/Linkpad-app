@@ -28,8 +28,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("LinkPad")]
 [assembly: AssemblyProduct("LinkPad PC Host")]
 [assembly: AssemblyCopyright("Copyright (C) LinkPad")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 [assembly: ComVisible(false)]
 
 namespace LinkPadHostApp
@@ -160,6 +160,18 @@ namespace LinkPadHostApp
             return p;
         }
 
+        public static string LayoutLabel(byte layout)
+        {
+            switch (layout)
+            {
+                case 1: return "DUAL STICK";
+                case 2: return "WHEEL";
+                case 3: return "PRO PADDLES";
+                case 4: return "FIGHT PAD";
+                default: return "RETRO";
+            }
+        }
+
         public static string MaskToText(int mask, byte layout, byte lx, byte ly, byte rx, byte ry)
         {
             List<string> parts = new List<string>();
@@ -181,7 +193,7 @@ namespace LinkPadHostApp
             }
             if (parts.Count == 0)
             {
-                return layout == 1 ? "DUAL STICK \u00B7 IDLE" : "RETRO \u00B7 IDLE";
+                return LayoutLabel(layout) + " \u00B7 IDLE";
             }
             return string.Join(" ", parts.ToArray());
         }
@@ -1733,7 +1745,7 @@ namespace LinkPadHostApp
             {
                 if (!AccentBorder.IsEmpty)
                 {
-                    using (Pen ap = new Pen(Color.FromArgb(150, AccentBorder), 1.25f))
+                    using (Pen ap = new Pen(Color.FromArgb(165, AccentBorder), 1.35f))
                     {
                         g.DrawPath(ap, path);
                     }
@@ -1744,6 +1756,16 @@ namespace LinkPadHostApp
                     using (Pen pen = new Pen(rimBrush, 1.0f))
                     {
                         g.DrawPath(pen, path);
+                    }
+                }
+
+                Rectangle innerRimRect = new Rectangle(rect.X + 1, rect.Y + 1, rect.Width - 2, rect.Height - 2);
+                if (innerRimRect.Width > 6 && innerRimRect.Height > 6)
+                {
+                    using (GraphicsPath ip = MainForm.CreateRoundedRect(innerRimRect, Math.Max(4, CornerRadius - 1)))
+                    using (Pen ipen = new Pen(Color.FromArgb(14, 255, 255, 255), 1.0f))
+                    {
+                        g.DrawPath(ipen, ip);
                     }
                 }
             }
@@ -2241,11 +2263,13 @@ namespace LinkPadHostApp
     {
         public bool IsActive;
         public Color AccentColor = Color.FromArgb(74, 222, 154);
+        public byte Layout;
         public int ButtonMask;
         public byte Lx;
         public byte Ly;
         public byte Rx;
         public byte Ry;
+        private readonly Font _badgeFont = new Font("Consolas", 6.8f, FontStyle.Bold);
 
         public MiniGamepadVisualizer()
         {
@@ -2254,15 +2278,16 @@ namespace LinkPadHostApp
             BackColor = Color.Transparent;
         }
 
-        public void UpdateInput(bool active, Color accent, int mask, byte lx, byte ly, byte rx, byte ry)
+        public void UpdateInput(bool active, Color accent, byte layout, int mask, byte lx, byte ly, byte rx, byte ry)
         {
-            if (IsActive == active && AccentColor == accent && ButtonMask == mask
+            if (IsActive == active && AccentColor == accent && Layout == layout && ButtonMask == mask
                 && Lx == lx && Ly == ly && Rx == rx && Ry == ry)
             {
                 return;
             }
             IsActive = active;
             AccentColor = accent;
+            Layout = layout;
             ButtonMask = mask;
             Lx = lx;
             Ly = ly;
@@ -2275,40 +2300,55 @@ namespace LinkPadHostApp
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
             Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
             using (GraphicsPath bp = MainForm.CreateRoundedRect(box, 10))
             {
-                using (SolidBrush bg = new SolidBrush(Color.FromArgb(10, 14, 22))) g.FillPath(bg, bp);
-                Color rim = IsActive ? Color.FromArgb(75, AccentColor) : Color.FromArgb(32, 42, 58);
+                using (LinearGradientBrush bg = new LinearGradientBrush(
+                    box, Color.FromArgb(14, 20, 31), Color.FromArgb(9, 13, 20), 90f))
+                {
+                    g.FillPath(bg, bp);
+                }
+                Color rim = IsActive ? Color.FromArgb(95, AccentColor) : Color.FromArgb(34, 44, 62);
                 using (Pen pen = new Pen(rim, 1.0f)) g.DrawPath(pen, bp);
             }
 
             // Shoulder/trigger indicators across top strip: L2, L1, R1, R2
-            DrawTriggerPill(g, 10, 6, 20, 4, (ButtonMask & (1 << 12)) != 0);
-            DrawTriggerPill(g, 33, 6, 20, 4, (ButtonMask & (1 << 8)) != 0);
-            DrawTriggerPill(g, Width - 53, 6, 20, 4, (ButtonMask & (1 << 9)) != 0);
-            DrawTriggerPill(g, Width - 30, 6, 20, 4, (ButtonMask & (1 << 13)) != 0);
+            DrawTriggerPill(g, 10, 6, 22, 4, (ButtonMask & (1 << 12)) != 0);
+            DrawTriggerPill(g, 36, 6, 22, 4, (ButtonMask & (1 << 8)) != 0);
+            DrawTriggerPill(g, Width - 58, 6, 22, 4, (ButtonMask & (1 << 9)) != 0);
+            DrawTriggerPill(g, Width - 32, 6, 22, 4, (ButtonMask & (1 << 13)) != 0);
 
             // Left stick & Right stick rings
-            DrawStickWell(g, 24f, 34f, 11f, Lx, Ly, (ButtonMask & (1 << 14)) != 0);
-            DrawStickWell(g, 60f, 34f, 11f, Rx, Ry, (ButtonMask & (1 << 15)) != 0);
+            DrawStickWell(g, 26f, 32f, 11f, Lx, Ly, (ButtonMask & (1 << 14)) != 0);
+            DrawStickWell(g, 62f, 32f, 11f, Rx, Ry, (ButtonMask & (1 << 15)) != 0);
 
-            // D-pad mini cross (center at x=92, y=34)
-            float dx = 92f;
-            float dy = 34f;
+            // D-pad mini cross
+            float dx = 98f;
+            float dy = 32f;
             DrawFaceDot(g, dx, dy - 7f, 2.5f, (ButtonMask & (1 << 0)) != 0); // Up
             DrawFaceDot(g, dx, dy + 7f, 2.5f, (ButtonMask & (1 << 1)) != 0); // Down
             DrawFaceDot(g, dx - 7f, dy, 2.5f, (ButtonMask & (1 << 2)) != 0); // Left
             DrawFaceDot(g, dx + 7f, dy, 2.5f, (ButtonMask & (1 << 3)) != 0); // Right
 
-            // ABXY mini diamond (center at x=128, y=34)
-            float ax = 128f;
-            float ay = 34f;
+            // ABXY mini diamond
+            float ax = Width - 28f;
+            float ay = 32f;
             DrawFaceDot(g, ax, ay + 7f, 2.8f, (ButtonMask & (1 << 4)) != 0); // A
             DrawFaceDot(g, ax + 7f, ay, 2.8f, (ButtonMask & (1 << 5)) != 0); // B
             DrawFaceDot(g, ax - 7f, ay, 2.8f, (ButtonMask & (1 << 6)) != 0); // X
             DrawFaceDot(g, ax, ay - 7f, 2.8f, (ButtonMask & (1 << 7)) != 0); // Y
+
+            string layoutText = IsActive ? Protocol.LayoutLabel(Layout) : "STANDBY";
+            Color badgeColor = IsActive ? Color.FromArgb(180, AccentColor) : Color.FromArgb(74, 86, 108);
+            TextRenderer.DrawText(
+                g,
+                layoutText,
+                _badgeFont,
+                new Rectangle(4, Height - 17, Width - 8, 14),
+                badgeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
 
         private void DrawTriggerPill(Graphics g, int x, int y, int w, int h, bool pressed)
@@ -2362,11 +2402,145 @@ namespace LinkPadHostApp
         }
     }
 
+    internal sealed class GlassConfirmDialog : Form
+    {
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private GlassConfirmDialog(string title, string message, Color accent, bool yesNo, string primaryText, string secondaryText)
+        {
+            DoubleBuffered = true;
+            Text = title;
+            ClientSize = new Size(420, 200);
+            MinimumSize = new Size(420, 200);
+            MaximumSize = new Size(420, 200);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.FromArgb(10, 13, 20);
+            ForeColor = Color.FromArgb(244, 247, 252);
+            Font = new Font("Segoe UI", 9.5f);
+
+            GlassCardPanel card = new GlassCardPanel
+            {
+                Location = new Point(14, 14),
+                Size = new Size(392, 172),
+                CornerRadius = 16,
+                AccentBorder = accent,
+                TopAccentBar = accent
+            };
+            Controls.Add(card);
+
+            Label titleLbl = new Label
+            {
+                Text = title,
+                Font = new Font("Segoe UI Semibold", 11.5f),
+                ForeColor = Color.FromArgb(244, 247, 252),
+                Location = new Point(16, 14),
+                Size = new Size(360, 24)
+            };
+            card.Controls.Add(titleLbl);
+
+            Label msgLbl = new Label
+            {
+                Text = message,
+                Font = new Font("Segoe UI", 9.0f),
+                ForeColor = Color.FromArgb(170, 182, 204),
+                Location = new Point(16, 44),
+                Size = new Size(360, 74)
+            };
+            card.Controls.Add(msgLbl);
+
+            if (yesNo)
+            {
+                GlassButton noBtn = new GlassButton
+                {
+                    Text = secondaryText,
+                    Location = new Point(176, 126),
+                    Size = new Size(94, 32),
+                    CornerRadius = 10,
+                    BgColor = Color.FromArgb(26, 34, 49),
+                    TextColor = Color.FromArgb(190, 202, 222),
+                    BorderColor = Color.FromArgb(56, 70, 94),
+                    Font = new Font("Segoe UI Semibold", 8.6f)
+                };
+                noBtn.Click += delegate { DialogResult = DialogResult.No; Close(); };
+                card.Controls.Add(noBtn);
+
+                GlassButton yesBtn = new GlassButton
+                {
+                    Text = primaryText,
+                    Location = new Point(278, 126),
+                    Size = new Size(98, 32),
+                    CornerRadius = 10,
+                    BgColor = accent,
+                    TextColor = Color.FromArgb(12, 16, 24),
+                    BorderColor = accent,
+                    Font = new Font("Segoe UI Semibold", 8.6f)
+                };
+                yesBtn.Click += delegate { DialogResult = DialogResult.Yes; Close(); };
+                card.Controls.Add(yesBtn);
+            }
+            else
+            {
+                GlassButton okBtn = new GlassButton
+                {
+                    Text = primaryText,
+                    Location = new Point(278, 126),
+                    Size = new Size(98, 32),
+                    CornerRadius = 10,
+                    BgColor = accent,
+                    TextColor = Color.FromArgb(12, 16, 24),
+                    BorderColor = accent,
+                    Font = new Font("Segoe UI Semibold", 8.6f)
+                };
+                okBtn.Click += delegate { DialogResult = DialogResult.OK; Close(); };
+                card.Controls.Add(okBtn);
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                int dark = 1;
+                if (DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)) != 0)
+                {
+                    DwmSetWindowAttribute(Handle, 19, ref dark, sizeof(int));
+                }
+                int captionColor = 0x00140D0A;
+                DwmSetWindowAttribute(Handle, 35, ref captionColor, sizeof(int));
+            }
+            catch { }
+        }
+
+        public static bool Ask(IWin32Window owner, string title, string message, Color accent, string yesText, string noText)
+        {
+            using (GlassConfirmDialog dlg = new GlassConfirmDialog(title, message, accent, true, yesText, noText))
+            {
+                return dlg.ShowDialog(owner) == DialogResult.Yes;
+            }
+        }
+
+        public static void Alert(IWin32Window owner, string title, string message, Color accent)
+        {
+            using (GlassConfirmDialog dlg = new GlassConfirmDialog(title, message, accent, false, "OK", ""))
+            {
+                dlg.ShowDialog(owner);
+            }
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private const string ViGEmInstallerUrl = "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe";
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+        private const int DWMWA_BORDER_COLOR = 34;
+        private const int DWMWA_CAPTION_COLOR = 35;
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -2402,6 +2576,11 @@ namespace LinkPadHostApp
         private int _codeCopiedUntilTick = 0;
         private bool _ipCopiedActive = false;
         private bool _codeCopiedActive = false;
+
+        private GlassCardPanel _toastBanner;
+        private Label _toastLabel;
+        private bool _toastActive = false;
+        private int _toastUntilTick = 0;
 
         private GlassPill _driverBadgePill;
         private Label _driverStatusLabel;
@@ -2449,8 +2628,8 @@ namespace LinkPadHostApp
             };
 
             Text = "LinkPad PC Host";
-            ClientSize = new Size(880, 560);
-            MinimumSize = new Size(880, 560);
+            ClientSize = new Size(940, 608);
+            MinimumSize = new Size(940, 608);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = _bg;
             ForeColor = _textMain;
@@ -2486,8 +2665,13 @@ namespace LinkPadHostApp
                     if (_copyBtn != null) _copyBtn.Text = "Copy";
                     needRefresh = true;
                 }
+                if (_toastActive && unchecked(now - _toastUntilTick) >= 0)
+                {
+                    _toastActive = false;
+                    if (_toastBanner != null) _toastBanner.Visible = false;
+                }
                 if (needRefresh) RefreshUi();
-                if (!_installingDriver && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive)
+                if (!_installingDriver && !_ipCopiedActive && !_ipRevealed && !_codeCopiedActive && !_toastActive)
                 {
                     _animTimer.Stop();
                 }
@@ -2515,6 +2699,10 @@ namespace LinkPadHostApp
                 {
                     DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref dark, sizeof(int));
                 }
+                int captionColor = 0x00140D0A;
+                int borderColor = 0x00523C2E;
+                DwmSetWindowAttribute(Handle, DWMWA_CAPTION_COLOR, ref captionColor, sizeof(int));
+                DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref borderColor, sizeof(int));
             }
             catch { }
         }
@@ -2612,9 +2800,9 @@ namespace LinkPadHostApp
 
             GlassPill hostPill = new GlassPill
             {
-                Text = "PC HOST \u00B7 v1.3",
+                Text = "PC HOST \u00B7 v1.4",
                 Location = new Point(162, 17),
-                Size = new Size(94, 20),
+                Size = new Size(98, 20),
                 CornerRadius = 9,
                 Font = new Font("Consolas", 7.6f, FontStyle.Bold),
                 FillColor = Color.FromArgb(18, 28, 44),
@@ -2626,7 +2814,7 @@ namespace LinkPadHostApp
             _ppsPill = new GlassPill
             {
                 Text = "0 pkt/s",
-                Location = new Point(402, 18),
+                Location = new Point(450, 18),
                 Size = new Size(92, 28),
                 CornerRadius = 11,
                 Font = new Font("Consolas", 8.2f, FontStyle.Bold),
@@ -2640,8 +2828,8 @@ namespace LinkPadHostApp
             _ipPill = new GlassPill
             {
                 Text = "\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022 :" + Protocol.HOST_UDP_PORT,
-                Location = new Point(502, 18),
-                Size = new Size(188, 28),
+                Location = new Point(550, 18),
+                Size = new Size(192, 28),
                 CornerRadius = 11,
                 Font = new Font("Consolas", 8.2f, FontStyle.Bold),
                 FillColor = _well,
@@ -2675,11 +2863,11 @@ namespace LinkPadHostApp
             };
             Controls.Add(_ipPill);
 
-            _joyCplBtn = CreateGlassButton("joy.cpl", 698, 18, 74, 28, _keycap, _blue, 10);
+            _joyCplBtn = CreateGlassButton("joy.cpl", 750, 18, 76, 28, _keycap, _blue, 10);
             _joyCplBtn.Click += delegate { OpenJoyCpl(); };
             Controls.Add(_joyCplBtn);
 
-            _firewallBtn = CreateGlassButton("Firewall", 780, 18, 78, 28, _keycap, _textMain, 10);
+            _firewallBtn = CreateGlassButton("Firewall", 834, 18, 84, 28, _keycap, _textMain, 10);
             _firewallBtn.Click += delegate { AllowFirewallRule(); };
             Controls.Add(_firewallBtn);
 
@@ -2936,14 +3124,14 @@ namespace LinkPadHostApp
             };
             trustCard.Controls.Add(_uniqueNamesSwitch);
 
-            // RIGHT COLUMN (x=402, w=456)
+            // RIGHT COLUMN (x=408, w=510)
             Label playersHeader = new Label
             {
                 Text = "LIVE PLAYER STAGE \u00B7 P1 \u2013 P4",
                 Font = new Font("Segoe UI", 8.2f, FontStyle.Bold),
                 ForeColor = _textMuted,
                 BackColor = Color.Transparent,
-                Location = new Point(404, 76),
+                Location = new Point(410, 76),
                 AutoSize = true
             };
             Controls.Add(playersHeader);
@@ -2951,8 +3139,8 @@ namespace LinkPadHostApp
             _connectedCountPill = new GlassPill
             {
                 Text = "0 / 4 ACTIVE",
-                Location = new Point(756, 73),
-                Size = new Size(102, 22),
+                Location = new Point(814, 73),
+                Size = new Size(104, 22),
                 CornerRadius = 10,
                 Font = new Font("Consolas", 7.6f, FontStyle.Bold),
                 FillColor = _well,
@@ -2964,12 +3152,12 @@ namespace LinkPadHostApp
             for (int i = 0; i < 4; i++)
             {
                 int slot = i + 1;
-                int cardY = 104 + i * 111;
+                int cardY = 104 + i * 112;
 
                 GlassCardPanel pCard = new GlassCardPanel
                 {
-                    Location = new Point(402, cardY),
-                    Size = new Size(456, 100),
+                    Location = new Point(408, cardY),
+                    Size = new Size(510, 102),
                     CornerRadius = 16
                 };
                 _slotCards[i] = pCard;
@@ -2994,7 +3182,7 @@ namespace LinkPadHostApp
                     Font = new Font("Segoe UI Semibold", 10.2f),
                     ForeColor = _textMuted,
                     Location = new Point(58, 14),
-                    Size = new Size(172, 22),
+                    Size = new Size(192, 22),
                     AutoEllipsis = true
                 };
                 pCard.Controls.Add(_slotTitles[i]);
@@ -3005,12 +3193,12 @@ namespace LinkPadHostApp
                     Font = new Font("Consolas", 8.0f),
                     ForeColor = _textMuted,
                     Location = new Point(14, 48),
-                    Size = new Size(262, 36),
+                    Size = new Size(288, 38),
                     AutoEllipsis = true
                 };
                 pCard.Controls.Add(_slotMasks[i]);
 
-                _kickBtns[i] = CreateGlassButton("Kick", 230, 14, 48, 24, Color.FromArgb(46, 23, 30), _crimson, 8);
+                _kickBtns[i] = CreateGlassButton("Kick", 254, 14, 52, 24, Color.FromArgb(46, 23, 30), _crimson, 8);
                 _kickBtns[i].Font = new Font("Segoe UI Semibold", 7.8f);
                 _kickBtns[i].BorderColor = Color.FromArgb(115, 50, 60);
                 _kickBtns[i].Visible = false;
@@ -3019,13 +3207,48 @@ namespace LinkPadHostApp
 
                 _slotVisuals[i] = new MiniGamepadVisualizer
                 {
-                    Location = new Point(288, 16),
-                    Size = new Size(154, 68),
+                    Location = new Point(314, 14),
+                    Size = new Size(182, 74),
                     AccentColor = _slotColors[i],
                     IsActive = false
                 };
                 pCard.Controls.Add(_slotVisuals[i]);
             }
+
+            // Bottom Liquid Glass Toast Banner
+            _toastBanner = new GlassCardPanel
+            {
+                Location = new Point(22, 558),
+                Size = new Size(896, 36),
+                CornerRadius = 12,
+                Visible = false
+            };
+            Controls.Add(_toastBanner);
+
+            _toastLabel = new Label
+            {
+                Text = "",
+                Font = new Font("Segoe UI Semibold", 8.8f),
+                ForeColor = _textMain,
+                BackColor = Color.Transparent,
+                Location = new Point(14, 7),
+                Size = new Size(868, 22),
+                AutoEllipsis = true
+            };
+            _toastBanner.Controls.Add(_toastLabel);
+        }
+
+        private void ShowGlassToast(string text, Color accent)
+        {
+            if (_toastBanner == null || _toastLabel == null) return;
+            _toastBanner.AccentBorder = accent;
+            _toastLabel.Text = text;
+            _toastLabel.ForeColor = accent;
+            _toastBanner.Visible = true;
+            _toastBanner.Invalidate();
+            _toastActive = true;
+            _toastUntilTick = unchecked(Environment.TickCount + 4500);
+            if (!_animTimer.Enabled) _animTimer.Start();
         }
 
         private GlassButton CreateGlassButton(string text, int x, int y, int w, int h, Color bg, Color fg, int radius)
@@ -3164,7 +3387,7 @@ namespace LinkPadHostApp
                     string trustTag = s.IsTrusted ? " \u00B7 Saved" : "";
                     _slotTitles[i].Text = s.DeviceName;
                     _slotTitles[i].ForeColor = _textMain;
-                    _slotTitles[i].Size = new Size(168, 22);
+                    _slotTitles[i].Size = new Size(188, 22);
                     _slotMasks[i].Text = string.Format("{0}{1}\n{2}",
                         rtt, trustTag, Protocol.MaskToText(s.ButtonMask, s.Layout, s.Lx, s.Ly, s.Rx, s.Ry));
                     _slotMasks[i].ForeColor = _slotColors[i];
@@ -3173,7 +3396,7 @@ namespace LinkPadHostApp
                     _slotCards[i].TopAccentBar = _slotColors[i];
                     _slotCards[i].Invalidate();
                     _slotBadges[i].Invalidate();
-                    _slotVisuals[i].UpdateInput(true, _slotColors[i], s.ButtonMask, s.Lx, s.Ly, s.Rx, s.Ry);
+                    _slotVisuals[i].UpdateInput(true, _slotColors[i], s.Layout, s.ButtonMask, s.Lx, s.Ly, s.Rx, s.Ry);
                     _kickBtns[i].Visible = true;
                 }
                 else
@@ -3181,7 +3404,7 @@ namespace LinkPadHostApp
                     bool p1Ready = (i == 0 && _engine.IsXboxActive);
                     _slotTitles[i].Text = p1Ready ? (_engine.UniqueSlotNames ? "LinkPad P1" : "LinkPad Controller") : ("Slot P" + (i + 1) + " Open");
                     _slotTitles[i].ForeColor = p1Ready ? _silver : _textMuted;
-                    _slotTitles[i].Size = new Size(218, 22);
+                    _slotTitles[i].Size = new Size(236, 22);
                     _slotMasks[i].Text = p1Ready ? "Ready in Windows (joy.cpl)\nWaiting for Android controller..." : "Standby\nEnter Pairing Code or use Saved Favorite";
                     _slotMasks[i].ForeColor = p1Ready ? _emerald : Color.FromArgb(98, 110, 132);
                     _slotBadges[i].BorderColor = p1Ready ? _emerald : Color.FromArgb(48, 62, 86);
@@ -3189,7 +3412,7 @@ namespace LinkPadHostApp
                     _slotCards[i].TopAccentBar = p1Ready ? Color.FromArgb(100, _emerald) : Color.Empty;
                     _slotCards[i].Invalidate();
                     _slotBadges[i].Invalidate();
-                    _slotVisuals[i].UpdateInput(false, _slotColors[i], 0, 0, 0, 0, 0);
+                    _slotVisuals[i].UpdateInput(false, _slotColors[i], 0, 0, 0, 0, 0, 0);
                     _kickBtns[i].Visible = false;
                 }
             }
@@ -3206,13 +3429,13 @@ namespace LinkPadHostApp
             {
                 if (!_engine.IsXboxActive && !_installingDriver)
                 {
-                    DialogResult r = MessageBox.Show(
+                    if (GlassConfirmDialog.Ask(
                         this,
-                        "The Xbox 360 virtual controller driver is not active yet, so joy.cpl may be empty.\n\nInstall / Activate Xbox 360 Driver now?",
-                        "LinkPad",
-                        MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Information);
-                    if (r == DialogResult.Yes)
+                        "Xbox 360 Driver Required",
+                        "The Xbox 360 virtual controller driver is not active yet, so joy.cpl may appear empty.\n\nInstall / Activate Xbox 360 Driver now?",
+                        _amber,
+                        "Install Driver",
+                        "Open Anyway"))
                     {
                         InstallViGEmDriverAsync();
                         return;
@@ -3355,45 +3578,38 @@ namespace LinkPadHostApp
                             RefreshUi();
                             if (!string.IsNullOrEmpty(failureMsg))
                             {
-                                DialogResult res = MessageBox.Show(
+                                if (GlassConfirmDialog.Ask(
                                     this,
+                                    "Xbox 360 Driver Setup",
                                     failureMsg + "\n\nOpen the official ViGEmBus download page in your browser instead?",
-                                    "LinkPad Xbox 360 Driver Setup",
-                                    MessageBoxButtons.YesNo,
-                                    MessageBoxIcon.Warning);
-                                if (res == DialogResult.Yes)
+                                    _amber,
+                                    "Open Page",
+                                    "Close"))
                                 {
                                     try { Process.Start("https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0"); } catch { }
                                 }
                             }
                             else if (xboxReady)
                             {
-                                MessageBox.Show(
-                                    this,
-                                    "Xbox 360 Virtual Controller is plugged in and active! Click joy.cpl to see it in Windows.",
-                                    "LinkPad Ready",
-                                    MessageBoxButtons.OK,
-                                    MessageBoxIcon.Information);
+                                ShowGlassToast("Xbox 360 Virtual Controller is active! Click joy.cpl to view LinkPad P1\u2013P4.", _emerald);
                             }
                             else if (installerRan && exitCode == 3010)
                             {
-                                MessageBox.Show(
+                                GlassConfirmDialog.Alert(
                                     this,
-                                    "ViGEmBus installation finished! Please restart Windows once so the Xbox 360 driver loads.",
                                     "Restart Required",
-                                    MessageBoxButtons.OK,
-                                    MessageBoxIcon.Information);
+                                    "ViGEmBus installation finished! Please restart Windows once so the Xbox 360 driver loads.",
+                                    _blue);
                             }
                             else if (installerRan)
                             {
-                                MessageBox.Show(
+                                GlassConfirmDialog.Alert(
                                     this,
+                                    "LinkPad Driver Setup",
                                     "Setup finished (code " + exitCode + "), but ViGEmBus is not active yet:\n" +
                                     (_engine.LastStatusError ?? "Unknown error") +
-                                    "\n\nTip: If you finished the wizard, restart Windows or check Windows Security > Core Isolation (Memory Integrity).",
-                                    "LinkPad Driver Setup",
-                                    MessageBoxButtons.OK,
-                                    MessageBoxIcon.Warning);
+                                    "\n\nTip: Restart Windows or check Windows Security > Core Isolation.",
+                                    _amber);
                             }
                         });
                     }
@@ -3410,8 +3626,7 @@ namespace LinkPadHostApp
                 Type ruleType = Type.GetTypeFromProgID("HNetCfg.FWRule");
                 if (policyType == null || ruleType == null)
                 {
-                    MessageBox.Show(this, "Windows Firewall COM service is unavailable. Allow LinkPad UDP 47850-47851 in Windows Security.",
-                        "LinkPad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    ShowGlassToast("Firewall COM unavailable. Allow LinkPad UDP 47850-47851 in Windows Security.", _amber);
                     return;
                 }
 
@@ -3435,8 +3650,7 @@ namespace LinkPadHostApp
                 ruleType.InvokeMember("Enabled", BindingFlags.SetProperty, null, rule, new object[] { true });
 
                 rules.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, rules, new object[] { rule });
-                MessageBox.Show(this, "Windows Firewall updated for LinkPad (UDP 47850-47851).",
-                    "LinkPad", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                ShowGlassToast("Windows Firewall updated for LinkPad (UDP 47850\u201347851).", _emerald);
             }
             catch (TargetInvocationException tie)
             {
@@ -3444,12 +3658,11 @@ namespace LinkPadHostApp
                 string msg = (inner is UnauthorizedAccessException || (inner is COMException && ((COMException)inner).ErrorCode == unchecked((int)0x80070005)))
                     ? "Administrator access is needed once to add the Windows Firewall rule.\n\nRight-click LinkPadHost.exe -> Run as administrator, then click Firewall."
                     : ("Could not update Windows Firewall: " + inner.Message);
-                MessageBox.Show(this, msg, "LinkPad Firewall", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                GlassConfirmDialog.Alert(this, "LinkPad Firewall", msg, _amber);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Could not update Windows Firewall: " + ex.Message,
-                    "LinkPad Firewall", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                GlassConfirmDialog.Alert(this, "LinkPad Firewall", "Could not update Windows Firewall: " + ex.Message, _crimson);
             }
         }
 

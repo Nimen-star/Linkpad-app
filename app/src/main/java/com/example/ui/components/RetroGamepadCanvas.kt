@@ -64,8 +64,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.LaunchedEffect
+import com.example.protocol.AnalogAxes
 import com.example.protocol.ControlCustomization
 import com.example.protocol.ControlOffset
+import com.example.protocol.ControllerTheme
 import com.example.protocol.HapticStrength
 import com.example.protocol.PadButton
 import com.example.ui.theme.BrushedSilver
@@ -178,13 +181,18 @@ fun RetroControllerPad(
     customization: ControlCustomization,
     editLayoutMode: Boolean,
     onCustomizationChange: (ControlCustomization) -> Unit,
-    onMaskChanged: (Int) -> Unit,
+    onMaskChanged: (Int) -> Unit = {},
+    controllerTheme: ControllerTheme = ControllerTheme.LIQUID_GLASS,
+    gyroAxes: AnalogAxes = AnalogAxes(),
+    onStateChanged: ((mask: Int, lx: Byte, ly: Byte, rx: Byte, ry: Byte) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val accent = playerAccentColor(slot)
+    val palette = resolveGamepadPalette(controllerTheme, slot)
+    val accent = palette.accent
     val latestOnMaskChanged by rememberUpdatedState(onMaskChanged)
+    val latestOnStateChanged by rememberUpdatedState(onStateChanged)
     val latestHaptic by rememberUpdatedState(hapticStrength)
 
     var dpadBits by remember { mutableIntStateOf(0) }
@@ -217,7 +225,13 @@ fun RetroControllerPad(
                 performGamepadHaptic(context, view, latestHaptic, isFaceButton = isFace)
             }
             latestOnMaskChanged(newTotal)
+            latestOnStateChanged?.invoke(newTotal, gyroAxes.lx, gyroAxes.ly, gyroAxes.rx, gyroAxes.ry)
         }
+    }
+
+    LaunchedEffect(gyroAxes) {
+        val total = dpadBits or abxyBits or lPressed or rPressed or selectPressed or startPressed
+        latestOnStateChanged?.invoke(total, gyroAxes.lx, gyroAxes.ly, gyroAxes.rx, gyroAxes.ry)
     }
 
     val totalMask = dpadBits or abxyBits or lPressed or rPressed or selectPressed or startPressed
@@ -257,6 +271,7 @@ fun RetroControllerPad(
                                 isLeft = true,
                                 pressed = lPressed != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width((142f * controlScale).coerceIn(108f, 178f).dp)
@@ -279,6 +294,7 @@ fun RetroControllerPad(
                                 isLeft = false,
                                 pressed = rPressed != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width((142f * controlScale).coerceIn(108f, 178f).dp)
@@ -311,6 +327,7 @@ fun RetroControllerPad(
                                 activeMask = totalMask,
                                 accent = accent,
                                 size = controlSize,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_dpad"),
                                 onDpadMaskChange = { mask -> emitCombined(newDpad = mask) }
@@ -333,6 +350,7 @@ fun RetroControllerPad(
                                     label = "SELECT",
                                     pressed = selectPressed != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_select"),
                                     onPressedChange = { down ->
@@ -343,6 +361,7 @@ fun RetroControllerPad(
                                     label = "START",
                                     pressed = startPressed != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_start"),
                                     onPressedChange = { down ->
@@ -363,6 +382,7 @@ fun RetroControllerPad(
                                 activeMask = totalMask,
                                 accent = accent,
                                 size = controlSize,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_abxy"),
                                 onAbxyMaskChange = { mask ->
@@ -400,6 +420,7 @@ fun RetroControllerPad(
                             isLeft = true,
                             pressed = lPressed != 0,
                             accent = accent,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -424,6 +445,7 @@ fun RetroControllerPad(
                             isLeft = false,
                             pressed = rPressed != 0,
                             accent = accent,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -452,6 +474,7 @@ fun RetroControllerPad(
                             activeMask = totalMask,
                             accent = accent,
                             size = controlSize,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_dpad"),
                             onDpadMaskChange = { mask -> emitCombined(newDpad = mask) }
@@ -468,6 +491,7 @@ fun RetroControllerPad(
                             activeMask = totalMask,
                             accent = accent,
                             size = controlSize,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_abxy"),
                             onAbxyMaskChange = { mask ->
@@ -496,6 +520,7 @@ fun RetroControllerPad(
                                 label = "SELECT",
                                 pressed = selectPressed != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_select"),
                                 onPressedChange = { down ->
@@ -506,6 +531,7 @@ fun RetroControllerPad(
                                 label = "START",
                                 pressed = startPressed != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_start"),
                                 onPressedChange = { down ->
@@ -527,6 +553,7 @@ internal fun ShoulderBumper(
     pressed: Boolean,
     accent: Color,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
     modifier: Modifier = Modifier,
     onPressedChange: (Boolean) -> Unit
 ) {
@@ -543,15 +570,15 @@ internal fun ShoulderBumper(
     }
     val rimBrush = Brush.linearGradient(
         colors = listOf(
-            if (pressed) accent.copy(alpha = 0.78f) else GlassRimBright,
-            if (pressed) accent.copy(alpha = 0.28f) else GlassRimDim
+            if (pressed) accent.copy(alpha = 0.85f) else palette.rimBright,
+            if (pressed) accent.copy(alpha = 0.32f) else palette.rimDim
         )
     )
     val fillBrush = Brush.verticalGradient(
         colors = if (pressed) {
-            listOf(accent.copy(alpha = 0.26f), GlassFillElevated)
+            themePressedCapFill(palette, accent)
         } else {
-            listOf(Color.White.copy(alpha = 0.11f), GlassFillBase)
+            themeIdleCapFill(palette)
         }
     )
 
@@ -592,7 +619,7 @@ internal fun ShoulderBumper(
             fontFamily = SpaceGroteskFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
-            color = if (pressed) TitaniumText else BrushedSilver
+            color = if (pressed) palette.legendPressed else palette.legendIdle
         )
     }
 }
@@ -603,6 +630,7 @@ internal fun MenuPillButton(
     pressed: Boolean,
     accent: Color,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
     modifier: Modifier = Modifier,
     onPressedChange: (Boolean) -> Unit
 ) {
@@ -652,10 +680,10 @@ internal fun MenuPillButton(
                     .graphicsLayer { rotationZ = -18f }
                     .size(width = 44.dp, height = 14.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (pressed) accent.copy(alpha = 0.30f) else GlassFillBase)
+                    .background(if (pressed) accent.copy(alpha = 0.34f) else palette.surfaceBottom)
                     .border(
                         width = 1.dp,
-                        color = if (pressed) accent.copy(alpha = 0.80f) else GlassRimMid,
+                        color = if (pressed) accent.copy(alpha = 0.85f) else palette.rimMid,
                         shape = RoundedCornerShape(8.dp)
                     )
             )
@@ -667,7 +695,7 @@ internal fun MenuPillButton(
                 letterSpacing = 1.sp,
                 maxLines = 1,
                 softWrap = false,
-                color = if (pressed) TitaniumText else PewterMuted
+                color = if (pressed) palette.legendPressed else palette.legendIdle
             )
         }
     }
@@ -679,6 +707,7 @@ internal fun InteractiveCrossDpad(
     accent: Color,
     size: Dp,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
     modifier: Modifier = Modifier,
     onDpadMaskChange: (Int) -> Unit
 ) {
@@ -741,7 +770,8 @@ internal fun InteractiveCrossDpad(
         CrossDpadGraphic(
             activeMask = activeMask,
             accent = accent,
-            size = size
+            size = size,
+            palette = palette
         )
     }
 }
@@ -750,7 +780,8 @@ internal fun InteractiveCrossDpad(
 fun CrossDpadGraphic(
     activeMask: Int,
     accent: Color,
-    size: Dp
+    size: Dp,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1)
 ) {
     val up = (activeMask and PadButton.UP.bit) != 0
     val down = (activeMask and PadButton.DOWN.bit) != 0
@@ -764,18 +795,18 @@ fun CrossDpadGraphic(
 
     val crossPath = remember { Path() }
     val chevronPath = remember { Path() }
-    val fillPaint = remember(cornerRadiusPx) {
+    val fillPaint = remember(cornerRadiusPx, palette.dpadBody) {
         Paint().apply {
             style = PaintingStyle.Fill
-            color = Color(0xFF1E2634)
+            color = palette.dpadBody
             asFrameworkPaint().pathEffect = android.graphics.CornerPathEffect(cornerRadiusPx)
         }
     }
-    val rimPaint = remember(cornerRadiusPx, rimStrokePx) {
+    val rimPaint = remember(cornerRadiusPx, rimStrokePx, palette.rimBright) {
         Paint().apply {
             style = PaintingStyle.Stroke
             strokeWidth = rimStrokePx
-            color = GlassRimBright
+            color = palette.rimBright
             asFrameworkPaint().pathEffect = android.graphics.CornerPathEffect(cornerRadiusPx)
         }
     }
@@ -812,7 +843,7 @@ fun CrossDpadGraphic(
 
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(OledWell.copy(alpha = 0.9f), GlassFillSubtle),
+                colors = listOf(themeWellBackground(palette), themeSubtleWell(palette)),
                 center = center,
                 radius = w * 0.50f
             ),
@@ -820,7 +851,7 @@ fun CrossDpadGraphic(
             center = center
         )
         drawCircle(
-            brush = Brush.linearGradient(listOf(GlassRimBright, GlassRimDim)),
+            brush = Brush.linearGradient(listOf(palette.rimBright, palette.rimDim)),
             radius = w * 0.49f,
             center = center,
             style = Stroke(width = hairlineStrokePx)
@@ -917,6 +948,7 @@ internal fun InteractiveAbxyCluster(
     accent: Color,
     size: Dp,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
     modifier: Modifier = Modifier,
     onAbxyMaskChange: (Int) -> Unit
 ) {
@@ -981,7 +1013,8 @@ internal fun InteractiveAbxyCluster(
         AbxyClusterGraphic(
             activeMask = activeMask,
             accent = accent,
-            size = size
+            size = size,
+            palette = palette
         )
     }
 }
@@ -990,7 +1023,8 @@ internal fun InteractiveAbxyCluster(
 fun AbxyClusterGraphic(
     activeMask: Int,
     accent: Color,
-    size: Dp
+    size: Dp,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1)
 ) {
     val density = LocalDensity.current
     val sizePx = with(density) { size.toPx() }
@@ -1006,19 +1040,18 @@ fun AbxyClusterGraphic(
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        listOf(OledWell.copy(alpha = 0.85f), GlassFillSubtle)
+                        listOf(themeWellBackground(palette), themeSubtleWell(palette))
                     )
                 )
                 .border(
                     BorderStroke(
                         1.dp,
-                        Brush.linearGradient(listOf(GlassRimBright, GlassRimDim))
+                        Brush.linearGradient(listOf(palette.rimBright, palette.rimDim))
                     ),
                     CircleShape
                 )
         )
 
-        // Xbox / Standard dual-stick diamond: Y top, A bottom, X left, B right
         val buttons = listOf(
             PadButton.Y to Offset(c, c - spread),
             PadButton.A to Offset(c, c + spread),
@@ -1033,24 +1066,18 @@ fun AbxyClusterGraphic(
                 animationSpec = tween(40),
                 label = "btnScale_${btn.shortLabel}"
             )
-            val btnAccent = when (btn) {
-                PadButton.A -> SignalEmerald
-                PadButton.B -> Color(0xFFF27474)
-                PadButton.X -> CobaltBlue
-                PadButton.Y -> WarmAmber
-                else -> accent
-            }
+            val btnAccent = palette.faceButtonAccent(btn)
             val capBrush = Brush.verticalGradient(
                 colors = if (pressed) {
-                    listOf(btnAccent.copy(alpha = 0.42f), GlassFillElevated)
+                    themePressedCapFill(palette, btnAccent)
                 } else {
-                    listOf(Color.White.copy(alpha = 0.13f), GlassFillBase)
+                    themeIdleCapFill(palette)
                 }
             )
             val rimBrush = Brush.linearGradient(
                 colors = listOf(
-                    if (pressed) btnAccent else btnAccent.copy(alpha = 0.42f),
-                    if (pressed) btnAccent.copy(alpha = 0.45f) else GlassRimDim
+                    if (pressed) btnAccent else btnAccent.copy(alpha = 0.48f),
+                    if (pressed) btnAccent.copy(alpha = 0.45f) else palette.rimDim
                 )
             )
             Box(
@@ -1083,11 +1110,11 @@ fun AbxyClusterGraphic(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = btn.shortLabel,
+                    text = palette.faceButtonLabel(btn),
                     fontFamily = SpaceGroteskFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = if (size >= 140.dp) 17.sp else 12.sp,
-                    color = if (pressed) TitaniumText else btnAccent.copy(alpha = 0.9f)
+                    color = if (pressed) palette.legendPressed else btnAccent.copy(alpha = 0.92f)
                 )
             }
         }

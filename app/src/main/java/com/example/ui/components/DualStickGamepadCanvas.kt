@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.protocol.AnalogAxes
 import com.example.protocol.ControlCustomization
+import com.example.protocol.ControllerTheme
 import com.example.protocol.HapticStrength
 import com.example.protocol.PadButton
 import com.example.ui.theme.BrushedSilver
@@ -65,7 +66,6 @@ import com.example.ui.theme.OledWell
 import com.example.ui.theme.PewterMuted
 import com.example.ui.theme.SpaceGroteskFamily
 import com.example.ui.theme.TitaniumText
-import com.example.ui.theme.playerAccentColor
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -80,11 +80,13 @@ fun DualStickControllerPad(
     editLayoutMode: Boolean,
     onCustomizationChange: (ControlCustomization) -> Unit,
     onStateChanged: (buttonMask: Int, lx: Byte, ly: Byte, rx: Byte, ry: Byte) -> Unit,
+    controllerTheme: ControllerTheme = ControllerTheme.LIQUID_GLASS,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val accent = playerAccentColor(slot)
+    val palette = resolveGamepadPalette(controllerTheme, slot)
+    val accent = palette.accent
     val latestOnStateChanged by rememberUpdatedState(onStateChanged)
     val latestHaptic by rememberUpdatedState(hapticStrength)
 
@@ -203,6 +205,7 @@ fun DualStickControllerPad(
                                 isLeft = true,
                                 pressed = l2Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(triggerW)
@@ -217,6 +220,7 @@ fun DualStickControllerPad(
                                 isLeft = false,
                                 pressed = l1Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(triggerW)
@@ -242,6 +246,7 @@ fun DualStickControllerPad(
                                 isLeft = true,
                                 pressed = r1Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(triggerW)
@@ -256,6 +261,7 @@ fun DualStickControllerPad(
                                 isLeft = false,
                                 pressed = r2Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(triggerW)
@@ -294,6 +300,9 @@ fun DualStickControllerPad(
                                 accent = accent,
                                 size = primarySize,
                                 deadzoneFrac = deadzoneFrac,
+                                palette = palette,
+                                externalNormX = gyroAxes.lx / 127f,
+                                externalNormY = gyroAxes.ly / 127f,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_left_stick"),
                                 onAxisChanged = { nx, ny ->
@@ -313,6 +322,7 @@ fun DualStickControllerPad(
                                 activeMask = totalMask,
                                 accent = accent,
                                 size = secondarySize,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_dpad"),
                                 onDpadMaskChange = { mask -> pushState(newDpad = mask) }
@@ -342,6 +352,7 @@ fun DualStickControllerPad(
                                     label = "L3",
                                     pressed = l3Bit != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_l3"),
                                     onPressedChange = { down ->
@@ -352,6 +363,7 @@ fun DualStickControllerPad(
                                     label = "R3",
                                     pressed = r3Bit != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_r3"),
                                     onPressedChange = { down ->
@@ -367,6 +379,7 @@ fun DualStickControllerPad(
                                     label = "SELECT",
                                     pressed = selectBit != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_select"),
                                     onPressedChange = { down ->
@@ -377,6 +390,7 @@ fun DualStickControllerPad(
                                     label = "START",
                                     pressed = startBit != 0,
                                     accent = accent,
+                                    palette = palette,
                                     enabled = !editLayoutMode,
                                     modifier = Modifier.testTag("pad_button_start"),
                                     onPressedChange = { down ->
@@ -403,6 +417,7 @@ fun DualStickControllerPad(
                                 activeMask = totalMask,
                                 accent = accent,
                                 size = primarySize,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_abxy"),
                                 onAbxyMaskChange = { mask -> pushState(newAbxy = mask, isFace = true) }
@@ -421,6 +436,9 @@ fun DualStickControllerPad(
                                 accent = accent,
                                 size = secondarySize,
                                 deadzoneFrac = deadzoneFrac,
+                                palette = palette,
+                                externalNormX = gyroAxes.rx / 127f,
+                                externalNormY = gyroAxes.ry / 127f,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_right_stick"),
                                 onAxisChanged = { nx, ny ->
@@ -459,6 +477,7 @@ fun DualStickControllerPad(
                                 isLeft = true,
                                 pressed = l2Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(72.dp)
@@ -473,6 +492,7 @@ fun DualStickControllerPad(
                                 isLeft = false,
                                 pressed = l1Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(72.dp)
@@ -498,6 +518,7 @@ fun DualStickControllerPad(
                                 isLeft = true,
                                 pressed = r1Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(72.dp)
@@ -512,6 +533,7 @@ fun DualStickControllerPad(
                                 isLeft = false,
                                 pressed = r2Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier
                                     .width(72.dp)
@@ -543,6 +565,9 @@ fun DualStickControllerPad(
                             accent = accent,
                             size = primarySize,
                             deadzoneFrac = deadzoneFrac,
+                            palette = palette,
+                            externalNormX = gyroAxes.lx / 127f,
+                            externalNormY = gyroAxes.ly / 127f,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_left_stick"),
                             onAxisChanged = { nx, ny -> pushState(newLx = nx, newLy = ny) }
@@ -560,6 +585,7 @@ fun DualStickControllerPad(
                             activeMask = totalMask,
                             accent = accent,
                             size = primarySize,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_abxy"),
                             onAbxyMaskChange = { mask -> pushState(newAbxy = mask, isFace = true) }
@@ -584,6 +610,7 @@ fun DualStickControllerPad(
                             activeMask = totalMask,
                             accent = accent,
                             size = secondarySize,
+                            palette = palette,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_dpad"),
                             onDpadMaskChange = { mask -> pushState(newDpad = mask) }
@@ -602,6 +629,9 @@ fun DualStickControllerPad(
                             accent = accent,
                             size = secondarySize,
                             deadzoneFrac = deadzoneFrac,
+                            palette = palette,
+                            externalNormX = gyroAxes.rx / 127f,
+                            externalNormY = gyroAxes.ry / 127f,
                             enabled = !editLayoutMode,
                             modifier = Modifier.testTag("pad_right_stick"),
                             onAxisChanged = { nx, ny -> pushState(newRx = nx, newRy = ny) }
@@ -629,6 +659,7 @@ fun DualStickControllerPad(
                                 label = "L3",
                                 pressed = l3Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_l3"),
                                 onPressedChange = { down ->
@@ -639,6 +670,7 @@ fun DualStickControllerPad(
                                 label = "SELECT",
                                 pressed = selectBit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_select"),
                                 onPressedChange = { down ->
@@ -649,6 +681,7 @@ fun DualStickControllerPad(
                                 label = "START",
                                 pressed = startBit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_start"),
                                 onPressedChange = { down ->
@@ -659,6 +692,7 @@ fun DualStickControllerPad(
                                 label = "R3",
                                 pressed = r3Bit != 0,
                                 accent = accent,
+                                palette = palette,
                                 enabled = !editLayoutMode,
                                 modifier = Modifier.testTag("pad_button_r3"),
                                 onPressedChange = { down ->
@@ -679,6 +713,7 @@ internal fun CompactThumbClickButton(
     pressed: Boolean,
     accent: Color,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
     modifier: Modifier = Modifier,
     onPressedChange: (Boolean) -> Unit
 ) {
@@ -687,9 +722,9 @@ internal fun CompactThumbClickButton(
         modifier = modifier
             .size(width = 48.dp, height = 48.dp)
             .clip(CircleShape)
-            .background(if (pressed) accent.copy(alpha = 0.28f) else GlassFillSubtle)
+            .background(if (pressed) accent.copy(alpha = 0.28f) else themeSubtleWell(palette))
             .border(
-                BorderStroke(1.dp, if (pressed) accent else GlassRimMid),
+                BorderStroke(1.dp, if (pressed) accent else palette.rimMid),
                 CircleShape
             )
             .semantics { contentDescription = "$label stick button" }
@@ -721,7 +756,7 @@ internal fun CompactThumbClickButton(
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.sp,
             maxLines = 1,
-            color = if (pressed) TitaniumText else PewterMuted
+            color = if (pressed) palette.legendPressed else palette.legendIdle
         )
     }
 }
@@ -733,6 +768,9 @@ fun InteractiveAnalogStick(
     size: Dp,
     deadzoneFrac: Float = 0.08f,
     enabled: Boolean = true,
+    palette: GamepadThemePalette = resolveGamepadPalette(ControllerTheme.LIQUID_GLASS, 1),
+    externalNormX: Float = 0f,
+    externalNormY: Float = 0f,
     modifier: Modifier = Modifier,
     onAxisChanged: (x: Int, y: Int) -> Unit
 ) {
@@ -745,6 +783,10 @@ fun InteractiveAnalogStick(
     var knobNormX by remember { mutableFloatStateOf(0f) }
     var knobNormY by remember { mutableFloatStateOf(0f) }
     var activeTouch by remember { mutableStateOf(false) }
+
+    val displayNormX = (knobNormX + externalNormX).coerceIn(-1f, 1f)
+    val displayNormY = (knobNormY + externalNormY).coerceIn(-1f, 1f)
+    val gyroDeflected = !activeTouch && (kotlin.math.abs(externalNormX) > 0.06f || kotlin.math.abs(externalNormY) > 0.06f)
 
     Box(
         modifier = modifier
@@ -830,10 +872,9 @@ fun InteractiveAnalogStick(
             val gateR = w * 0.36f
             val capR = w * 0.27f
 
-            // Deep recessed Obsidian circular well
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(OledWell, Color(0xFF141B27)),
+                    colors = listOf(themeWellBackground(palette), palette.surfaceBottom),
                     center = c,
                     radius = outerR
                 ),
@@ -843,30 +884,28 @@ fun InteractiveAnalogStick(
             drawCircle(
                 brush = Brush.linearGradient(
                     listOf(
-                        if (activeTouch) accent.copy(alpha = 0.72f) else GlassRimBright,
-                        GlassRimDim
+                        if (activeTouch || gyroDeflected) accent.copy(alpha = 0.72f) else palette.rimBright,
+                        palette.rimDim
                     )
                 ),
                 radius = outerR,
                 center = c,
                 style = Stroke(width = 1.4.dp.toPx())
             )
-            // Subtle inner gate ring
             drawCircle(
-                color = GlassRimMid,
+                color = palette.rimMid,
                 radius = gateR,
                 center = c,
                 style = Stroke(width = 0.8.dp.toPx())
             )
 
-            // Thumb cap position
             val shift = maxTravel * 0.85f
             val capCenter = Offset(
-                x = c.x + knobNormX * shift,
-                y = c.y + knobNormY * shift
+                x = c.x + displayNormX * shift,
+                y = c.y + displayNormY * shift
             )
 
-            if (activeTouch) {
+            if (activeTouch || gyroDeflected) {
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(accent.copy(alpha = 0.32f), Color.Transparent),
@@ -880,10 +919,10 @@ fun InteractiveAnalogStick(
 
             drawCircle(
                 brush = Brush.verticalGradient(
-                    colors = if (activeTouch) {
-                        listOf(accent.copy(alpha = 0.28f), GlassFillElevated)
+                    colors = if (activeTouch || gyroDeflected) {
+                        themePressedCapFill(palette, accent)
                     } else {
-                        listOf(Color.White.copy(alpha = 0.14f), GlassFillBase)
+                        themeIdleCapFill(palette)
                     }
                 ),
                 radius = capR,
@@ -892,17 +931,16 @@ fun InteractiveAnalogStick(
             drawCircle(
                 brush = Brush.linearGradient(
                     listOf(
-                        if (activeTouch) accent else GlassRimBright,
-                        if (activeTouch) accent.copy(alpha = 0.4f) else GlassRimDim
+                        if (activeTouch || gyroDeflected) accent else palette.rimBright,
+                        if (activeTouch || gyroDeflected) accent.copy(alpha = 0.4f) else palette.rimDim
                     )
                 ),
                 radius = capR,
                 center = capCenter,
-                style = Stroke(width = if (activeTouch) 1.8.dp.toPx() else 1.2.dp.toPx())
+                style = Stroke(width = if (activeTouch || gyroDeflected) 1.8.dp.toPx() else 1.2.dp.toPx())
             )
-            // Inner grip dish
             drawCircle(
-                color = OledWell.copy(alpha = 0.55f),
+                color = palette.wellColor.copy(alpha = 0.55f),
                 radius = capR * 0.56f,
                 center = capCenter,
                 style = Stroke(width = 1.dp.toPx())
@@ -915,10 +953,10 @@ fun InteractiveAnalogStick(
             fontFamily = SpaceGroteskFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.sp,
-            color = if (activeTouch) TitaniumText else PewterMuted.copy(alpha = 0.7f),
+            color = if (activeTouch || gyroDeflected) palette.legendPressed else palette.legendIdle.copy(alpha = 0.78f),
             modifier = Modifier.graphicsLayer {
-                translationX = (knobNormX * shiftDp.toPx())
-                translationY = (knobNormY * shiftDp.toPx())
+                translationX = (displayNormX * shiftDp.toPx())
+                translationY = (displayNormY * shiftDp.toPx())
             }
         )
     }

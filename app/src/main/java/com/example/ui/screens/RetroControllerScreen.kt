@@ -8,6 +8,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -16,6 +17,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -32,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenWith
@@ -74,13 +78,21 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.protocol.AnalogAxes
 import com.example.protocol.ControlCustomization
 import com.example.protocol.ControllerLayout
+import com.example.protocol.ControllerTheme
 import com.example.protocol.GyroMode
+import com.example.protocol.GyroResponseMode
 import com.example.protocol.HapticStrength
+import com.example.protocol.ProPaddleConfig
 import com.example.transport.BluetoothHidState
 import com.example.transport.ClientConnectionState
+import com.example.ui.components.ArcadeFightControllerPad
 import com.example.ui.components.DualStickControllerPad
+import com.example.ui.components.GyroMotionMath
 import com.example.ui.components.LiquidGlassBackdrop
+import com.example.ui.components.LiquidGlassCheckRow
 import com.example.ui.components.LiquidGlassPanel
+import com.example.ui.components.ProDualStickControllerPad
+import com.example.ui.components.RacingWheelControllerPad
 import com.example.ui.components.RetroControllerPad
 import com.example.ui.theme.BrushedSilver
 import com.example.ui.theme.CobaltBlue
@@ -102,17 +114,28 @@ private enum class OrientationChoice(val label: String, val orientationFlag: Int
 
 @Composable
 fun RetroControllerScreen(
+    previewMode: Boolean = false,
     connectionState: ClientConnectionState,
     hidState: BluetoothHidState,
     controllerLayout: ControllerLayout,
+    controllerTheme: ControllerTheme = ControllerTheme.LIQUID_GLASS,
     hapticStrength: HapticStrength,
     gyroMode: GyroMode,
+    gyroResponseMode: GyroResponseMode = GyroResponseMode.TILT_HOLD,
+    gyroSensitivity: Float = 1.0f,
+    invertGyroY: Boolean = false,
     stickDeadzonePct: Int,
+    proPaddleConfig: ProPaddleConfig = ProPaddleConfig(),
     customization: ControlCustomization,
     onSelectLayout: (ControllerLayout) -> Unit,
+    onSelectTheme: (ControllerTheme) -> Unit = {},
     onSelectHapticStrength: (HapticStrength) -> Unit,
     onSelectGyroMode: (GyroMode) -> Unit,
+    onSelectGyroResponseMode: (GyroResponseMode) -> Unit = {},
+    onChangeGyroSensitivity: (Float) -> Unit = {},
+    onChangeInvertGyroY: (Boolean) -> Unit = {},
     onChangeDeadzonePct: (Int) -> Unit,
+    onChangeProPaddleConfig: (ProPaddleConfig) -> Unit = {},
     onChangeCustomization: (ControlCustomization) -> Unit,
     onResetCustomization: () -> Unit,
     onSendControllerState: (buttonMask: Int, layout: ControllerLayout, lx: Byte, ly: Byte, rx: Byte, ry: Byte) -> Unit,
@@ -127,6 +150,18 @@ fun RetroControllerScreen(
     var editLayoutMode by remember { mutableStateOf(false) }
     var gyroAxes by remember { mutableStateOf(AnalogAxes()) }
     var latestMask by remember { mutableIntStateOf(0) }
+    var recenterNonce by remember { mutableIntStateOf(0) }
+
+    fun currentDisplayRotation(): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val r = activity?.display?.rotation
+            if (r != null) return r
+        }
+        @Suppress("DEPRECATION")
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        @Suppress("DEPRECATION")
+        return wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+    }
 
     fun applyImmersiveFullscreen() {
         val window = activity?.window ?: return
@@ -178,29 +213,76 @@ fun RetroControllerScreen(
         }
     }
 
-    DisposableEffect(gyroMode) {
+    DisposableEffect(gyroMode, gyroResponseMode, gyroSensitivity, invertGyroY, recenterNonce) {
         if (gyroMode == GyroMode.OFF) {
             gyroAxes = AnalogAxes()
             onDispose { }
         } else {
             val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-            val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+            val gameRotSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            val rotVecSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+            val gyroSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+
+            val useTiltHold = gyroResponseMode == GyroResponseMode.TILT_HOLD &&
+                (gameRotSensor != null || rotVecSensor != null)
+            val activeSensor = when {
+                useTiltHold -> gameRotSensor ?: rotVecSensor
+                gyroSensor != null -> gyroSensor
+                else -> null
+            }
+
+            var baselineMatrix: FloatArray? = null
+            val rawMatrix = FloatArray(9)
+            var smoothGx = 0f
+            var smoothGy = 0f
+            var smoothGz = 0f
+
             val listener = object : SensorEventListener {
                 override fun onSensorChanged(event: SensorEvent) {
-                    val sensitivity = 42f
-                    val yaw = (-event.values[2] * sensitivity).roundToInt().coerceIn(-127, 127).toByte()
-                    val pitch = (-event.values[0] * sensitivity).roundToInt().coerceIn(-127, 127).toByte()
-                    gyroAxes = when (gyroMode) {
-                        GyroMode.STEER_LEFT_STICK -> AnalogAxes(lx = yaw, ly = pitch)
-                        GyroMode.AIM_RIGHT_STICK -> AnalogAxes(rx = yaw, ry = pitch)
-                        GyroMode.OFF -> AnalogAxes()
+                    val displayRot = currentDisplayRotation()
+                    if (useTiltHold) {
+                        SensorManager.getRotationMatrixFromVector(rawMatrix, event.values)
+                        val remapped = GyroMotionMath.remapRotationMatrixForDisplay(rawMatrix, displayRot)
+                        val base = baselineMatrix
+                        if (base == null) {
+                            baselineMatrix = remapped.copyOf()
+                            gyroAxes = AnalogAxes()
+                        } else {
+                            val rel = GyroMotionMath.relativeRotationMatrix(base, remapped)
+                            gyroAxes = GyroMotionMath.computeTiltHoldAxes(
+                                rel = rel,
+                                gyroMode = gyroMode,
+                                sensitivity = gyroSensitivity,
+                                invertY = invertGyroY
+                            )
+                        }
+                    } else {
+                        val (rx, ry, rz) = GyroMotionMath.remapAngularRateForDisplay(
+                            gx = event.values[0],
+                            gy = event.values[1],
+                            gz = event.values[2],
+                            displayRotation = displayRot
+                        )
+                        val alpha = 0.42f
+                        smoothGx += (rx - smoothGx) * alpha
+                        smoothGy += (ry - smoothGy) * alpha
+                        smoothGz += (rz - smoothGz) * alpha
+                        gyroAxes = GyroMotionMath.computeRateAimAxes(
+                            scrGx = smoothGx,
+                            scrGy = smoothGy,
+                            scrGz = smoothGz,
+                            gyroMode = gyroMode,
+                            sensitivity = gyroSensitivity,
+                            invertY = invertGyroY
+                        )
                     }
                 }
 
                 override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
             }
-            if (sensor != null) {
-                sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+
+            if (activeSensor != null && sensorManager != null) {
+                sensorManager.registerListener(listener, activeSensor, SensorManager.SENSOR_DELAY_GAME)
             }
             onDispose {
                 sensorManager?.unregisterListener(listener)
@@ -234,10 +316,13 @@ fun RetroControllerScreen(
                         hapticStrength = hapticStrength,
                         customization = customization,
                         editLayoutMode = editLayoutMode,
+                        controllerTheme = controllerTheme,
+                        gyroAxes = gyroAxes,
                         onCustomizationChange = onChangeCustomization,
-                        onMaskChanged = { mask ->
+                        onMaskChanged = { mask -> latestMask = mask },
+                        onStateChanged = { mask, lx, ly, rx, ry ->
                             latestMask = mask
-                            onSendControllerState(mask, ControllerLayout.RETRO_HANDHELD, 0, 0, 0, 0)
+                            onSendControllerState(mask, ControllerLayout.RETRO_HANDHELD, lx, ly, rx, ry)
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -250,6 +335,7 @@ fun RetroControllerScreen(
                         customization = customization,
                         gyroAxes = gyroAxes,
                         editLayoutMode = editLayoutMode,
+                        controllerTheme = controllerTheme,
                         onCustomizationChange = onChangeCustomization,
                         onStateChanged = { mask, lx, ly, rx, ry ->
                             latestMask = mask
@@ -258,9 +344,59 @@ fun RetroControllerScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+                ControllerLayout.RACING_WHEEL -> {
+                    RacingWheelControllerPad(
+                        slot = slot,
+                        hapticStrength = hapticStrength,
+                        customization = customization,
+                        gyroAxes = gyroAxes,
+                        editLayoutMode = editLayoutMode,
+                        controllerTheme = controllerTheme,
+                        onCustomizationChange = onChangeCustomization,
+                        onStateChanged = { mask, lx, ly, rx, ry ->
+                            latestMask = mask
+                            onSendControllerState(mask, ControllerLayout.RACING_WHEEL, lx, ly, rx, ry)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                ControllerLayout.PRO_DUAL_STICK -> {
+                    ProDualStickControllerPad(
+                        slot = slot,
+                        hapticStrength = hapticStrength,
+                        stickDeadzonePct = stickDeadzonePct,
+                        customization = customization,
+                        paddleConfig = proPaddleConfig,
+                        gyroAxes = gyroAxes,
+                        editLayoutMode = editLayoutMode,
+                        controllerTheme = controllerTheme,
+                        onCustomizationChange = onChangeCustomization,
+                        onStateChanged = { mask, lx, ly, rx, ry ->
+                            latestMask = mask
+                            onSendControllerState(mask, ControllerLayout.PRO_DUAL_STICK, lx, ly, rx, ry)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                ControllerLayout.ARCADE_FIGHT_PAD -> {
+                    ArcadeFightControllerPad(
+                        slot = slot,
+                        hapticStrength = hapticStrength,
+                        customization = customization,
+                        gyroAxes = gyroAxes,
+                        editLayoutMode = editLayoutMode,
+                        controllerTheme = controllerTheme,
+                        onCustomizationChange = onChangeCustomization,
+                        onStateChanged = { mask, lx, ly, rx, ry ->
+                            latestMask = mask
+                            onSendControllerState(mask, ControllerLayout.ARCADE_FIGHT_PAD, lx, ly, rx, ry)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            // Minimal Top-Middle Settings Hub (no P1 / IP / latency HUD on controller canvas)
+            // Minimal Top-Middle Hub
             Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -328,6 +464,22 @@ fun RetroControllerScreen(
                         }
                     }
                 } else {
+                    if (previewMode) {
+                        LiquidGlassPanel(
+                            shape = CircleShape,
+                            subtle = true,
+                            accentBorderTint = CobaltBlue.copy(alpha = 0.65f)
+                        ) {
+                            Text(
+                                text = "PREVIEW · OFFLINE",
+                                fontFamily = JetBrainsMonoFamily,
+                                fontSize = 10.sp,
+                                color = CobaltBlue,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+
                     LiquidGlassPanel(
                         shape = CircleShape,
                         elevated = true,
@@ -356,11 +508,43 @@ fun RetroControllerScreen(
                             )
                         }
                     }
+
+                    if (gyroMode != GyroMode.OFF) {
+                        LiquidGlassPanel(
+                            shape = CircleShape,
+                            subtle = true,
+                            accentBorderTint = SignalEmerald.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(CircleShape)
+                                .clickable { recenterNonce++ }
+                                .testTag("gyro_recenter_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CenterFocusStrong,
+                                    contentDescription = "Recenter Gyro",
+                                    tint = SignalEmerald,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Recenter",
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontSize = 10.sp,
+                                    color = TitaniumText
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            // Disconnected Overlay (skipped when native Bluetooth HID session is connected/connecting)
-            if (!isHidActive &&
+            // Disconnected Overlay (suppressed during Offline Preview and native Bluetooth HID)
+            if (!previewMode && !isHidActive &&
                 (connectionState is ClientConnectionState.Error ||
                     connectionState is ClientConnectionState.Disconnected)
             ) {
@@ -419,7 +603,7 @@ fun RetroControllerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(ObsidianBg.copy(alpha = 0.55f))
+                    .background(ObsidianBg.copy(alpha = 0.58f))
                     .clickable(onClick = { showSettingsModal = false })
                     .padding(16.dp),
                 contentAlignment = Alignment.Center
@@ -428,7 +612,7 @@ fun RetroControllerScreen(
                     shape = RoundedCornerShape(26.dp),
                     elevated = true,
                     modifier = Modifier
-                        .widthIn(max = 460.dp)
+                        .widthIn(max = 490.dp)
                         .fillMaxWidth()
                         .clickable(enabled = false, onClick = {})
                 ) {
@@ -436,69 +620,80 @@ fun RetroControllerScreen(
                         modifier = Modifier
                             .verticalScroll(rememberScrollState())
                             .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(15.dp)
                     ) {
-                        // Modal Header with Disconnect X & Close
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Controller Settings",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = TitaniumText
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = if (previewMode) "Customize Controller" else "Controller Settings",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = TitaniumText
+                                )
+                                Text(
+                                    text = "Saved per layout (${controllerLayout.label})",
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontSize = 10.sp,
+                                    color = PewterMuted
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showSettingsModal = false
+                                    onDisconnect()
+                                },
+                                border = BorderStroke(1.dp, PrecisionCrimson.copy(alpha = 0.6f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = PrecisionCrimson.copy(alpha = 0.14f),
+                                    contentColor = PrecisionCrimson
+                                ),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("disconnect_controller_button")
                             ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        showSettingsModal = false
-                                        onDisconnect()
-                                    },
-                                    border = BorderStroke(1.dp, PrecisionCrimson.copy(alpha = 0.6f)),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        containerColor = PrecisionCrimson.copy(alpha = 0.14f),
-                                        contentColor = PrecisionCrimson
-                                    ),
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("disconnect_controller_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Disconnect",
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Disconnect", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = if (previewMode) "Close Preview" else "Disconnect",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (previewMode) "Exit" else "Disconnect",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
 
-                        // Layout Mode Switcher: Dual Stick vs Retro
-                        SettingChipSection(
+                        // Layout Mode Switcher
+                        WrappingChipSection(
                             label = "CONTROLLER LAYOUT",
                             options = ControllerLayout.entries.map { it.label },
                             selectedIndex = ControllerLayout.entries.indexOf(controllerLayout),
                             testTagPrefix = "layout_option",
                             onSelect = { idx ->
-                                onSelectLayout(ControllerLayout.entries[idx])
-                                onSendControllerState(
-                                    latestMask,
-                                    ControllerLayout.entries[idx],
-                                    0,
-                                    0,
-                                    0,
-                                    0
-                                )
+                                val picked = ControllerLayout.entries[idx]
+                                onSelectLayout(picked)
+                                onSendControllerState(latestMask, picked, 0, 0, 0, 0)
+                            }
+                        )
+
+                        // Visual Controller Theme
+                        WrappingChipSection(
+                            label = "CONTROLLER THEME",
+                            options = ControllerTheme.entries.map { it.label },
+                            selectedIndex = ControllerTheme.entries.indexOf(controllerTheme),
+                            testTagPrefix = "theme_option",
+                            onSelect = { idx ->
+                                onSelectTheme(ControllerTheme.entries[idx])
                             }
                         )
 
                         // Orientation Lock
-                        SettingChipSection(
+                        WrappingChipSection(
                             label = "ORIENTATION",
                             options = OrientationChoice.entries.map { it.label },
                             selectedIndex = OrientationChoice.entries.indexOf(orientationChoice),
@@ -507,7 +702,7 @@ fun RetroControllerScreen(
                         )
 
                         // ABXY & Button Haptic Strength
-                        SettingChipSection(
+                        WrappingChipSection(
                             label = "ABXY & BUTTON HAPTICS",
                             options = HapticStrength.entries.map { it.label },
                             selectedIndex = HapticStrength.entries.indexOf(hapticStrength),
@@ -516,13 +711,89 @@ fun RetroControllerScreen(
                         )
 
                         // Gyro Motion
-                        SettingChipSection(
+                        WrappingChipSection(
                             label = "GYRO MOTION",
                             options = GyroMode.entries.map { it.label },
                             selectedIndex = GyroMode.entries.indexOf(gyroMode),
                             testTagPrefix = "gyro_option",
                             onSelect = { idx -> onSelectGyroMode(GyroMode.entries[idx]) }
                         )
+
+                        if (gyroMode != GyroMode.OFF) {
+                            WrappingChipSection(
+                                label = "GYRO FEEL",
+                                options = GyroResponseMode.entries.map { it.label },
+                                selectedIndex = GyroResponseMode.entries.indexOf(gyroResponseMode),
+                                testTagPrefix = "gyro_feel_option",
+                                onSelect = { idx ->
+                                    recenterNonce++
+                                    onSelectGyroResponseMode(GyroResponseMode.entries[idx])
+                                }
+                            )
+
+                            SliderSettingRow(
+                                label = "GYRO SENSITIVITY",
+                                valueText = "${(gyroSensitivity * 100f).roundToInt()}%",
+                                value = gyroSensitivity,
+                                range = 0.5f..2.5f,
+                                onValueChange = onChangeGyroSensitivity
+                            )
+
+                            LiquidGlassCheckRow(
+                                checked = invertGyroY,
+                                label = "Invert Gyro Y (Pitch)",
+                                onCheckedChange = onChangeInvertGyroY,
+                                modifier = Modifier.testTag("invert_gyro_y_checkbox")
+                            )
+                        }
+
+                        if (controllerLayout == ControllerLayout.PRO_DUAL_STICK) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "PRO PADDLES (TAP TO REMAP M1–M4)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = PewterMuted
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    (1..4).forEach { paddleIdx ->
+                                        val mapped = proPaddleConfig.buttonFor(paddleIdx)
+                                        val choices = ProPaddleConfig.REMAPPABLE_CHOICES
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = GlassFillSubtle,
+                                            border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.55f)),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .minimumInteractiveComponentSize()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    val nextIdx = (choices.indexOf(mapped) + 1) % choices.size
+                                                    onChangeProPaddleConfig(
+                                                        proPaddleConfig.withPaddle(paddleIdx, choices[nextIdx])
+                                                    )
+                                                }
+                                                .testTag("paddle_map_m$paddleIdx")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 10.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "M$paddleIdx:${mapped.shortLabel}",
+                                                    fontFamily = JetBrainsMonoFamily,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = TitaniumText
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         // Deadzone Slider
                         SliderSettingRow(
@@ -535,7 +806,7 @@ fun RetroControllerScreen(
 
                         // Scale Slider
                         SliderSettingRow(
-                            label = "BUTTON SCALE",
+                            label = "BUTTON SCALE (${controllerLayout.label.uppercase()})",
                             valueText = "${(customization.scale * 100f).roundToInt()}%",
                             value = customization.scale,
                             range = 0.72f..1.35f,
@@ -546,7 +817,7 @@ fun RetroControllerScreen(
 
                         // Opacity Slider
                         SliderSettingRow(
-                            label = "OPACITY",
+                            label = "OPACITY (${controllerLayout.label.uppercase()})",
                             valueText = "${(customization.opacity * 100f).roundToInt()}%",
                             value = customization.opacity,
                             range = 0.35f..1.0f,
@@ -555,7 +826,6 @@ fun RetroControllerScreen(
                             }
                         )
 
-                        // Customize Positions / Reset / Resume Play
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -610,7 +880,10 @@ fun RetroControllerScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("close_controller_settings_button")
                         ) {
-                            Text("Resume Playing", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = if (previewMode) "Done Customizing" else "Resume Playing",
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -619,8 +892,9 @@ fun RetroControllerScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SettingChipSection(
+private fun WrappingChipSection(
     label: String,
     options: List<String>,
     selectedIndex: Int,
@@ -633,9 +907,10 @@ private fun SettingChipSection(
             style = MaterialTheme.typography.labelMedium,
             color = PewterMuted
         )
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             options.forEachIndexed { idx, text ->
                 val selected = idx == selectedIndex
@@ -644,14 +919,13 @@ private fun SettingChipSection(
                     color = if (selected) CobaltBlue.copy(alpha = 0.22f) else GlassFillSubtle,
                     border = BorderStroke(1.dp, if (selected) CobaltBlue else GlassRimMid),
                     modifier = Modifier
-                        .weight(1f)
                         .minimumInteractiveComponentSize()
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { onSelect(idx) }
                         .testTag("${testTagPrefix}_$idx")
                 ) {
                     Box(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

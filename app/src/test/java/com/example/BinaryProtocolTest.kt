@@ -133,4 +133,37 @@ class BinaryProtocolTest {
         assertEquals(127.toByte(), decoded?.rx)
         assertEquals((-127).toByte(), decoded?.ry)
     }
+
+    @Test
+    fun newControllerLayouts_mapWireIdsAndRoundTripAccurately() {
+        val layouts = listOf(
+            ControllerLayout.RETRO_HANDHELD to 0.toByte(),
+            ControllerLayout.DUAL_STICK to 1.toByte(),
+            ControllerLayout.RACING_WHEEL to 2.toByte(),
+            ControllerLayout.PRO_DUAL_STICK to 3.toByte(),
+            ControllerLayout.ARCADE_FIGHT_PAD to 4.toByte()
+        )
+        for ((layout, wireId) in layouts) {
+            assertEquals(wireId, layout.wireId)
+            assertEquals(layout, ControllerLayout.fromWireId(wireId))
+
+            val pkt = InputPacket(
+                type = PacketType.INPUT,
+                slot = 2,
+                sequence = 42,
+                buttonMask = PadButton.A.bit or PadButton.L2.bit or PadButton.R2.bit,
+                layout = layout,
+                lx = (-64).toByte(),
+                ly = 0,
+                rx = 0,
+                ry = 32
+            )
+            val decoded = BinaryProtocol.decode(BinaryProtocol.encode(pkt))
+            assertNotNull(decoded)
+            assertEquals(layout, decoded?.layout)
+            assertEquals((-64).toByte(), decoded?.lx)
+            assertEquals(32.toByte(), decoded?.ry)
+        }
+        assertEquals(ControllerLayout.RETRO_HANDHELD, ControllerLayout.fromWireId(99.toByte()))
+    }
 }

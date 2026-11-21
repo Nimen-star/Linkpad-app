@@ -31,12 +31,23 @@ enum class TransportType(val badge: String) {
 
 enum class ControllerLayout(val wireId: Byte, val label: String) {
     RETRO_HANDHELD(0, "Retro"),
-    DUAL_STICK(1, "Dual Stick");
+    DUAL_STICK(1, "Dual Stick"),
+    RACING_WHEEL(2, "Wheel"),
+    PRO_DUAL_STICK(3, "Pro Paddles"),
+    ARCADE_FIGHT_PAD(4, "Fight Pad");
 
     companion object {
         fun fromWireId(id: Byte): ControllerLayout =
             entries.firstOrNull { it.wireId == id } ?: RETRO_HANDHELD
     }
+}
+
+enum class ControllerTheme(val label: String) {
+    LIQUID_GLASS("Liquid Glass"),
+    XBOX_NEON("Xbox Dark"),
+    DUAL_SENSE("DualSense"),
+    SWITCH_NEON("Switch"),
+    RETRO_SNES("Retro SNES")
 }
 
 enum class HapticStrength(val label: String) {
@@ -50,6 +61,47 @@ enum class GyroMode(val label: String) {
     OFF("Off"),
     STEER_LEFT_STICK("Steer (L-Stick)"),
     AIM_RIGHT_STICK("Aim (R-Stick)")
+}
+
+enum class GyroResponseMode(val label: String) {
+    TILT_HOLD("Tilt Hold"),
+    RATE_AIM("Rate Aim")
+}
+
+data class ProPaddleConfig(
+    val m1: PadButton = PadButton.A,
+    val m2: PadButton = PadButton.B,
+    val m3: PadButton = PadButton.L3,
+    val m4: PadButton = PadButton.R3
+) {
+    fun buttonFor(index: Int): PadButton = when (index) {
+        1 -> m1
+        2 -> m2
+        3 -> m3
+        else -> m4
+    }
+
+    fun withPaddle(index: Int, button: PadButton): ProPaddleConfig = when (index) {
+        1 -> copy(m1 = button)
+        2 -> copy(m2 = button)
+        3 -> copy(m3 = button)
+        else -> copy(m4 = button)
+    }
+
+    companion object {
+        val REMAPPABLE_CHOICES = listOf(
+            PadButton.A,
+            PadButton.B,
+            PadButton.X,
+            PadButton.Y,
+            PadButton.L,
+            PadButton.R,
+            PadButton.L2,
+            PadButton.R2,
+            PadButton.L3,
+            PadButton.R3
+        )
+    }
 }
 
 data class ControlOffset(
@@ -66,7 +118,8 @@ data class ControlCustomization(
     val abxyOffset: ControlOffset = ControlOffset(),
     val leftShoulderOffset: ControlOffset = ControlOffset(),
     val rightShoulderOffset: ControlOffset = ControlOffset(),
-    val menuOffset: ControlOffset = ControlOffset()
+    val menuOffset: ControlOffset = ControlOffset(),
+    val paddlesOffset: ControlOffset = ControlOffset()
 ) {
     fun resetPositions(): ControlCustomization = copy(
         dpadOffset = ControlOffset(),
@@ -75,7 +128,8 @@ data class ControlCustomization(
         abxyOffset = ControlOffset(),
         leftShoulderOffset = ControlOffset(),
         rightShoulderOffset = ControlOffset(),
-        menuOffset = ControlOffset()
+        menuOffset = ControlOffset(),
+        paddlesOffset = ControlOffset()
     )
 }
 

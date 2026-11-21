@@ -42,9 +42,35 @@ object LinkPadConstants {
         }
     }
 
+    fun hasBluetoothScanPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.BLUETOOTH_SCAN
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            hasBluetoothConnectPermission(context)
+        }
+    }
+
+    fun hasBluetoothAdvertisePermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.BLUETOOTH_ADVERTISE
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            hasBluetoothConnectPermission(context)
+        }
+    }
+
     fun requiredBluetoothPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT)
+            arrayOf(
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_ADVERTISE
+            )
         } else {
             arrayOf(android.Manifest.permission.BLUETOOTH)
         }

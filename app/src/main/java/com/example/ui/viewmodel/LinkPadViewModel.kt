@@ -14,18 +14,22 @@ import com.example.data.LinkPadPreferences
 import com.example.data.UserSettings
 import com.example.protocol.ControlCustomization
 import com.example.protocol.ControllerLayout
+import com.example.protocol.ControllerTheme
 import com.example.protocol.DiscoveredHost
 import com.example.protocol.FavoriteHostEntry
 import com.example.protocol.GyroMode
+import com.example.protocol.GyroResponseMode
 import com.example.protocol.HapticStrength
 import com.example.protocol.KeymapProfile
 import com.example.protocol.PlayerSlotState
+import com.example.protocol.ProPaddleConfig
 import com.example.protocol.RecentHostEntry
 import com.example.protocol.TransportType
 import com.example.transport.BluetoothHidController
 import com.example.transport.BluetoothHidState
 import com.example.transport.ClientConnectionState
 import com.example.transport.ControllerClientSession
+import com.example.transport.HidDiscoveredDevice
 import com.example.transport.HostDiscoveryManager
 import com.example.transport.LinkPadConstants
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,6 +78,8 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
     val discoveredHosts: StateFlow<List<DiscoveredHost>> = discoveryManager.hosts
     val clientConnectionState: StateFlow<ClientConnectionState> = clientSession.connectionState
     val hidState: StateFlow<BluetoothHidState> = bluetoothHidController.state
+    val hidNearbyDevices: StateFlow<List<HidDiscoveredDevice>> = bluetoothHidController.nearbyDevices
+    val hidIsScanning: StateFlow<Boolean> = bluetoothHidController.isScanning
 
     private val _environmentStatus = MutableStateFlow(EnvironmentStatus())
     val environmentStatus: StateFlow<EnvironmentStatus> = _environmentStatus
@@ -158,9 +164,33 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun setControllerTheme(theme: ControllerTheme) {
+        viewModelScope.launch {
+            preferences.setControllerTheme(theme)
+        }
+    }
+
     fun setGyroMode(mode: GyroMode) {
         viewModelScope.launch {
             preferences.setGyroMode(mode)
+        }
+    }
+
+    fun setGyroResponseMode(mode: GyroResponseMode) {
+        viewModelScope.launch {
+            preferences.setGyroResponseMode(mode)
+        }
+    }
+
+    fun setGyroSensitivity(sensitivity: Float) {
+        viewModelScope.launch {
+            preferences.setGyroSensitivity(sensitivity)
+        }
+    }
+
+    fun setInvertGyroY(invert: Boolean) {
+        viewModelScope.launch {
+            preferences.setInvertGyroY(invert)
         }
     }
 
@@ -170,15 +200,21 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setControlCustomization(customization: ControlCustomization) {
+    fun setProPaddleConfig(config: ProPaddleConfig) {
         viewModelScope.launch {
-            preferences.setControlCustomization(customization)
+            preferences.setProPaddleConfig(config)
         }
     }
 
-    fun resetControlCustomization() {
+    fun setControlCustomization(layout: ControllerLayout, customization: ControlCustomization) {
         viewModelScope.launch {
-            preferences.resetControlCustomization()
+            preferences.setControlCustomization(layout, customization)
+        }
+    }
+
+    fun resetControlCustomization(layout: ControllerLayout) {
+        viewModelScope.launch {
+            preferences.resetControlCustomization(layout)
         }
     }
 
@@ -196,13 +232,27 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
 
     fun startBluetoothHidRegistration() {
         bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
-        bluetoothHidController.startRegistration()
+        bluetoothHidController.startRegistration(settings.value.deviceName)
         refreshSystemStatus()
     }
 
     fun connectBluetoothHidTarget(address: String) {
         bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
         bluetoothHidController.connectToTarget(address)
+    }
+
+    fun connectBluetoothHidByMac(mac: String) {
+        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
+        bluetoothHidController.connectByMacAddress(mac)
+    }
+
+    fun startBluetoothHidScan() {
+        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
+        bluetoothHidController.startNearbyScan()
+    }
+
+    fun stopBluetoothHidScan() {
+        bluetoothHidController.stopNearbyScan()
     }
 
     fun markHidControllerActive() {

@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity() {
                 val discoveredHosts by viewModel.discoveredHosts.collectAsStateWithLifecycle()
                 val clientState by viewModel.clientConnectionState.collectAsStateWithLifecycle()
                 val hidState by viewModel.hidState.collectAsStateWithLifecycle()
+                val hidNearbyDevices by viewModel.hidNearbyDevices.collectAsStateWithLifecycle()
+                val hidIsScanning by viewModel.hidIsScanning.collectAsStateWithLifecycle()
 
                 NavHost(
                     navController = navController,
@@ -69,6 +71,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onOpenPcCompanion = {
                                 navController.navigate(Routes.PC_COMPANION)
+                            },
+                            onOpenControllerCustomizer = {
+                                navController.navigate("${Routes.CONTROLLER}?preview=true")
                             },
                             onUpdateDeviceName = { name ->
                                 viewModel.setDeviceName(name)
@@ -170,6 +175,8 @@ class MainActivity : ComponentActivity() {
                             favoriteHosts = settings.favoriteHosts,
                             connectionState = clientState,
                             hidState = hidState,
+                            hidNearbyDevices = hidNearbyDevices,
+                            hidIsScanning = hidIsScanning,
                             environmentStatus = envStatus,
                             prefillIp = prefillIp,
                             prefillPort = prefillPort,
@@ -178,9 +185,15 @@ class MainActivity : ComponentActivity() {
                             onRefreshBluetooth = { viewModel.refreshBluetoothDiscovery() },
                             onStartHidRegistration = { viewModel.startBluetoothHidRegistration() },
                             onConnectHidTarget = { addr -> viewModel.connectBluetoothHidTarget(addr) },
+                            onConnectHidByMac = { mac -> viewModel.connectBluetoothHidByMac(mac) },
+                            onStartHidScan = { viewModel.startBluetoothHidScan() },
+                            onStopHidScan = { viewModel.stopBluetoothHidScan() },
                             onOpenHidController = {
                                 viewModel.markHidControllerActive()
                                 navController.navigate(Routes.CONTROLLER)
+                            },
+                            onOpenControllerCustomizer = {
+                                navController.navigate("${Routes.CONTROLLER}?preview=true")
                             },
                             onClearError = { viewModel.clearClientError() },
                             onConnectHost = { host, code, saveAsFavorite ->
@@ -214,26 +227,54 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    composable(Routes.CONTROLLER) {
+                    composable(
+                        route = "${Routes.CONTROLLER}?preview={preview}",
+                        arguments = listOf(
+                            navArgument("preview") {
+                                type = NavType.BoolType
+                                defaultValue = false
+                            }
+                        )
+                    ) { backStackEntry ->
+                        val isPreview = backStackEntry.arguments?.getBoolean("preview") ?: false
                         RetroControllerScreen(
+                            previewMode = isPreview,
                             connectionState = clientState,
                             hidState = hidState,
                             controllerLayout = settings.controllerLayout,
+                            controllerTheme = settings.controllerTheme,
                             hapticStrength = settings.hapticStrength,
                             gyroMode = settings.gyroMode,
+                            gyroResponseMode = settings.gyroResponseMode,
+                            gyroSensitivity = settings.gyroSensitivity,
+                            invertGyroY = settings.invertGyroY,
                             stickDeadzonePct = settings.stickDeadzonePct,
-                            customization = settings.controlCustomization,
+                            proPaddleConfig = settings.proPaddleConfig,
+                            customization = settings.customizationFor(settings.controllerLayout),
                             onSelectLayout = { layout -> viewModel.setControllerLayout(layout) },
+                            onSelectTheme = { theme -> viewModel.setControllerTheme(theme) },
                             onSelectHapticStrength = { strength -> viewModel.setHapticStrength(strength) },
                             onSelectGyroMode = { mode -> viewModel.setGyroMode(mode) },
+                            onSelectGyroResponseMode = { mode -> viewModel.setGyroResponseMode(mode) },
+                            onChangeGyroSensitivity = { sens -> viewModel.setGyroSensitivity(sens) },
+                            onChangeInvertGyroY = { inv -> viewModel.setInvertGyroY(inv) },
                             onChangeDeadzonePct = { pct -> viewModel.setStickDeadzonePct(pct) },
-                            onChangeCustomization = { custom -> viewModel.setControlCustomization(custom) },
-                            onResetCustomization = { viewModel.resetControlCustomization() },
+                            onChangeProPaddleConfig = { cfg -> viewModel.setProPaddleConfig(cfg) },
+                            onChangeCustomization = { custom ->
+                                viewModel.setControlCustomization(settings.controllerLayout, custom)
+                            },
+                            onResetCustomization = {
+                                viewModel.resetControlCustomization(settings.controllerLayout)
+                            },
                             onSendControllerState = { mask, layout, lx, ly, rx, ry ->
-                                viewModel.sendControllerState(mask, layout, lx, ly, rx, ry)
+                                if (!isPreview) {
+                                    viewModel.sendControllerState(mask, layout, lx, ly, rx, ry)
+                                }
                             },
                             onDisconnect = {
-                                viewModel.disconnectClient()
+                                if (!isPreview) {
+                                    viewModel.disconnectClient()
+                                }
                                 navController.popBackStack()
                             }
                         )

@@ -29,18 +29,19 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -63,14 +64,16 @@ import com.example.protocol.FavoriteHostEntry
 import com.example.protocol.RecentHostEntry
 import com.example.protocol.TransportType
 import com.example.ui.components.LiquidGlassBackdrop
+import com.example.ui.components.LiquidGlassDialog
 import com.example.ui.components.LiquidGlassPanel
+import com.example.ui.components.LiquidGlassTextField
 import com.example.ui.components.TapToRevealIpChip
 import com.example.ui.theme.BrushedSilver
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.GlassFillSubtle
 import com.example.ui.theme.GlassRimMid
-import com.example.ui.theme.GraphiteElevated
 import com.example.ui.theme.JetBrainsMonoFamily
+import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.PewterMuted
 import com.example.ui.theme.SignalEmerald
 import com.example.ui.theme.TitaniumText
@@ -86,6 +89,7 @@ fun HomeScreen(
     onOpenControllerDiscovery: () -> Unit,
     onOpenHostMode: () -> Unit,
     onOpenPcCompanion: () -> Unit,
+    onOpenControllerCustomizer: () -> Unit = {},
     onUpdateDeviceName: (String) -> Unit,
     onConnectFavorite: (FavoriteHostEntry) -> Unit,
     onRemoveFavorite: (FavoriteHostEntry) -> Unit,
@@ -303,6 +307,62 @@ fun HomeScreen(
                         }
                     }
 
+                    // Offline Controller Customizer Strip (Themes, Layouts, Gyro, Drag Positions)
+                    var customFocused by remember { mutableStateOf(false) }
+                    LiquidGlassPanel(
+                        shape = RoundedCornerShape(18.dp),
+                        subtle = true,
+                        accentBorderTint = if (customFocused) BrushedSilver else CobaltBlue.copy(alpha = 0.36f),
+                        borderWidth = if (customFocused) 1.5.dp else 1.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .onFocusChanged { customFocused = it.isFocused }
+                            .focusable()
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable(onClick = onOpenControllerCustomizer)
+                            .testTag("open_customizer_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Customize Controller",
+                                    tint = CobaltBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "Customize Controller",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = TitaniumText
+                                    )
+                                    Text(
+                                        text = "${settings.controllerLayout.label.uppercase()} · ${settings.controllerTheme.label.uppercase()} · OFFLINE",
+                                        fontFamily = JetBrainsMonoFamily,
+                                        fontSize = 10.sp,
+                                        color = PewterMuted
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Open Controller Customizer",
+                                tint = CobaltBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
                     // Favorite Hosts (1-tap reconnect without code)
                     if (favoriteHosts.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -503,35 +563,62 @@ fun HomeScreen(
     }
 
     if (showRenameDialog) {
-        var draftName by remember { mutableStateOf(settings.deviceName) }
-        AlertDialog(
+        var draftName by remember(settings.deviceName) { mutableStateOf(settings.deviceName) }
+        LiquidGlassDialog(
             onDismissRequest = { showRenameDialog = false },
-            containerColor = GraphiteElevated,
-            title = { Text("Device Name", color = TitaniumText) },
-            text = {
-                OutlinedTextField(
-                    value = draftName,
-                    onValueChange = { if (it.length <= 20) draftName = it },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onUpdateDeviceName(draftName)
-                        showRenameDialog = false
-                    }
+            accentColor = CobaltBlue,
+            maxWidthDp = 400
+        ) {
+            Text(
+                text = "Device Name",
+                style = MaterialTheme.typography.titleLarge,
+                color = TitaniumText
+            )
+            Text(
+                text = "Visible to LAN hosts and Bluetooth HID receivers.",
+                style = MaterialTheme.typography.bodySmall,
+                color = PewterMuted
+            )
+            LiquidGlassTextField(
+                value = draftName,
+                onValueChange = { if (it.length <= 20) draftName = it },
+                label = "DEVICE ALIAS",
+                placeholder = "LinkPad Controller",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("rename_device_input")
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showRenameDialog = false },
+                    border = BorderStroke(1.dp, GlassRimMid),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
                 ) {
-                    Text("Save", color = CobaltBlue)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRenameDialog = false }) {
                     Text("Cancel", color = PewterMuted)
                 }
+                Button(
+                    onClick = {
+                        onUpdateDeviceName(draftName.ifBlank { settings.deviceName })
+                        showRenameDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CobaltBlue,
+                        contentColor = ObsidianBg
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .testTag("save_device_name_button")
+                ) {
+                    Text("Save", fontWeight = FontWeight.SemiBold)
+                }
             }
-        )
+        }
     }
 }
 
