@@ -24,6 +24,9 @@ object LinkPadConstants {
     val BT_SERVICE_UUID: UUID = UUID.fromString("8c4f1d20-6f2a-4c3b-9b71-2a0e5d904101")
 
     const val MAX_PLAYERS = 4
+    const val UHID_AGENT_UDP_PORT = 47852
+    const val UHID_VENDOR_ID = 0x1209
+    const val UHID_PRODUCT_ID_BASE = 0x4C50
     const val CLIENT_TIMEOUT_MS = 5_500L
     const val PING_INTERVAL_MS = 300L
     const val BEACON_INTERVAL_MS = 750L
@@ -42,35 +45,9 @@ object LinkPadConstants {
         }
     }
 
-    fun hasBluetoothScanPermission(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.BLUETOOTH_SCAN
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            hasBluetoothConnectPermission(context)
-        }
-    }
-
-    fun hasBluetoothAdvertisePermission(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.BLUETOOTH_ADVERTISE
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            hasBluetoothConnectPermission(context)
-        }
-    }
-
     fun requiredBluetoothPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                android.Manifest.permission.BLUETOOTH_CONNECT,
-                android.Manifest.permission.BLUETOOTH_SCAN,
-                android.Manifest.permission.BLUETOOTH_ADVERTISE
-            )
+            arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT)
         } else {
             arrayOf(android.Manifest.permission.BLUETOOTH)
         }

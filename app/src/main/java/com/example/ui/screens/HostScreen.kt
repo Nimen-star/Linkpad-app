@@ -3,9 +3,10 @@ package com.example.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,18 +30,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -64,7 +69,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,14 +81,18 @@ import com.example.protocol.KeymapProfile
 import com.example.protocol.PadButton
 import com.example.protocol.PlayerSlotState
 import com.example.transport.LinkPadConstants
+import com.example.uhid.UhidBridgeState
 import com.example.ui.components.LiquidGlassBackdrop
+import com.example.ui.components.LiquidGlassDialog
 import com.example.ui.components.LiquidGlassPanel
+import com.example.ui.components.LiquidGlassTextField
 import com.example.ui.components.TapToRevealIpChip
 import com.example.ui.theme.BrushedSilver
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.GlassFillSubtle
 import com.example.ui.theme.GlassRimMid
 import com.example.ui.theme.GraphiteElevated
+import com.example.ui.theme.HairlineBorder
 import com.example.ui.theme.HairlineSubtle
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.ObsidianBg
@@ -89,49 +100,42 @@ import com.example.ui.theme.PewterMuted
 import com.example.ui.theme.PrecisionCrimson
 import com.example.ui.theme.SignalEmerald
 import com.example.ui.theme.TitaniumText
+import com.example.ui.theme.WarmAmber
 import com.example.ui.theme.playerAccentColor
-import com.example.ui.viewmodel.EnvironmentStatus
 
 @Composable
 fun HostScreen(
     hostActive: Boolean,
     pairingCode: String,
     localIp: String,
-    bluetoothHostingActive: Boolean,
     slots: List<PlayerSlotState>,
-    environmentStatus: EnvironmentStatus,
+    hardwareBridgeState: UhidBridgeState,
     allowFavoritesWithoutCode: Boolean,
     trustedDeviceCount: Int,
     onBack: () -> Unit,
     onStartHost: () -> Unit,
     onStopHost: () -> Unit,
     onRegenerateCode: () -> Unit,
-    onToggleBluetoothHost: (Boolean) -> Unit,
     onUpdateSlotKeymap: (Int, KeymapProfile) -> Unit,
     onKickPlayer: (Int) -> Unit,
     onToggleAllowFavoritesWithoutCode: (Boolean) -> Unit,
     onClearTrustedDevices: () -> Unit,
-    onOpenControllerDiscovery: () -> Unit,
-    onRefreshSystemStatus: () -> Unit
+    onRefreshSystemStatus: () -> Unit,
+    onRefreshHardwareBridge: () -> Unit,
+    onActivateHardwareGamepads: () -> Unit,
+    onPairWirelessDebugging: (String, String) -> Unit
 ) {
     val context = LocalContext.current
+    var showWirelessPairModal by remember { mutableStateOf(false) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         onRefreshSystemStatus()
+        onRefreshHardwareBridge()
     }
 
     LaunchedEffect(Unit) {
         if (!hostActive) {
             onStartHost()
-        }
-    }
-
-    val btPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        onRefreshSystemStatus()
-        if (results.values.any { it }) {
-            onToggleBluetoothHost(true)
         }
     }
 
@@ -211,7 +215,7 @@ fun HostScreen(
 
                     val leftColumn: @Composable () -> Unit = {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            // Pairing Code Panel
+                            // Pairing Code Panel (Clean Wi-Fi UDP Host card)
                             LiquidGlassPanel(
                                 shape = RoundedCornerShape(24.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -226,7 +230,7 @@ fun HostScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "CODE",
+                                            text = "PAIRING CODE",
                                             style = MaterialTheme.typography.labelMedium,
                                             color = PewterMuted
                                         )
@@ -310,42 +314,26 @@ fun HostScreen(
 
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Bluetooth,
-                                                contentDescription = "Bluetooth",
-                                                tint = if (bluetoothHostingActive) CobaltBlue else PewterMuted,
+                                                imageVector = Icons.Default.Wifi,
+                                                contentDescription = "Wi-Fi UDP Host",
+                                                tint = if (hostActive) SignalEmerald else PewterMuted,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                             Text(
-                                                text = "BT",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = TitaniumText
-                                            )
-                                            Switch(
-                                                checked = bluetoothHostingActive,
-                                                onCheckedChange = { wantEnable ->
-                                                    if (wantEnable && !environmentStatus.hasBluetoothPermission) {
-                                                        btPermissionLauncher.launch(
-                                                            LinkPadConstants.requiredBluetoothPermissions()
-                                                        )
-                                                    } else {
-                                                        onToggleBluetoothHost(wantEnable)
-                                                    }
-                                                },
-                                                colors = SwitchDefaults.colors(
-                                                    checkedThumbColor = TitaniumText,
-                                                    checkedTrackColor = CobaltBlue.copy(alpha = 0.65f)
-                                                ),
-                                                modifier = Modifier.testTag("host_bluetooth_switch")
+                                                text = if (hostActive) "WI-FI UDP READY" else "OFFLINE",
+                                                fontFamily = JetBrainsMonoFamily,
+                                                fontSize = 10.sp,
+                                                color = if (hostActive) SignalEmerald else PewterMuted
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            // Players P1-P4 (compact live indicators right inside slots; monitor preview removed)
+                            // Players P1-P4
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
                                     text = "PLAYERS · ${slots.count { it.connected }}/4",
@@ -365,6 +353,23 @@ fun HostScreen(
 
                     val rightColumn: @Composable () -> Unit = {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            // OS Hardware Gamepad Bridge Card (Wi-Fi UDP -> 4 Kernel UHID Pads, Zero Shizuku, Zero Root)
+                            HardwareGamepadsCard(
+                                bridgeState = hardwareBridgeState,
+                                onRefresh = onRefreshHardwareBridge,
+                                onActivate = onActivateHardwareGamepads,
+                                onOpenPairDialog = { showWirelessPairModal = true },
+                                onOpenImeSettings = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                }
+                            )
+
+                            // Trusted Favorites Setting Card
                             LiquidGlassPanel(
                                 shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -374,12 +379,11 @@ fun HostScreen(
                                     verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Text(
-                                        text = "HOST SETTINGS & TV CONTROL",
+                                        text = "HOST SECURITY",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = PewterMuted
                                     )
 
-                                    // Favorites No-Code Pairing
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -447,58 +451,6 @@ fun HostScreen(
                                             )
                                         }
                                     }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(1.dp)
-                                            .background(HairlineSubtle)
-                                    )
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalAlignment = Alignment.Top
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Gamepad,
-                                            contentDescription = null,
-                                            tint = CobaltBlue,
-                                            modifier = Modifier
-                                                .padding(top = 2.dp)
-                                                .size(18.dp)
-                                        )
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "Native Android TV & Phone Control",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                color = TitaniumText
-                                            )
-                                            Text(
-                                                text = "For universal hardware gamepad input on Android TV, phones, or Chrome Hardware Tester (no Gboard switch or debugging), open Controller Mode and pair via Bluetooth OS Gamepad. Multiple phones can connect to the same TV or PC.",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = PewterMuted
-                                            )
-                                            OutlinedButton(
-                                                onClick = onOpenControllerDiscovery,
-                                                border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.5f)),
-                                                modifier = Modifier
-                                                    .minimumInteractiveComponentSize()
-                                                    .testTag("open_bt_gamepad_discovery_button")
-                                            ) {
-                                                Text(
-                                                    text = "Open Controller Mode",
-                                                    color = CobaltBlue,
-                                                    fontSize = 12.sp,
-                                                    maxLines = 1,
-                                                    softWrap = false
-                                                )
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -518,6 +470,340 @@ fun HostScreen(
                         rightColumn()
                     }
                 }
+            }
+        }
+    }
+
+    if (showWirelessPairModal) {
+        val detectedPort = (hardwareBridgeState as? UhidBridgeState.SetupRequired)?.wirelessPairPort
+        var pairPortText by remember(detectedPort) {
+            mutableStateOf(detectedPort?.toString() ?: "")
+        }
+        var pairPinText by remember { mutableStateOf("") }
+
+        LiquidGlassDialog(
+            onDismissRequest = { showWirelessPairModal = false },
+            accentColor = CobaltBlue,
+            maxWidthDp = 420
+        ) {
+            Text(
+                text = "Pair Wireless Debugging",
+                style = MaterialTheme.typography.titleLarge,
+                color = TitaniumText
+            )
+            Text(
+                text = "On Android 11+, open Developer Options → Wireless debugging → Pair device with pairing code, then enter the 6-digit PIN and Port below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = PewterMuted
+            )
+            LiquidGlassTextField(
+                value = pairPortText,
+                onValueChange = { input -> pairPortText = input.filter { it.isDigit() }.take(5) },
+                label = "PAIRING PORT",
+                placeholder = detectedPort?.toString() ?: "e.g. 41235",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("wireless_pair_port_input")
+            )
+            LiquidGlassTextField(
+                value = pairPinText,
+                onValueChange = { input -> pairPinText = input.filter { it.isDigit() }.take(6) },
+                label = "6-DIGIT WI-FI PAIRING CODE",
+                placeholder = "••••••",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                textStyle = TextStyle(
+                    fontFamily = JetBrainsMonoFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    letterSpacing = 5.sp,
+                    color = TitaniumText
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("wireless_pair_pin_input")
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showWirelessPairModal = false },
+                    border = BorderStroke(1.dp, GlassRimMid),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                ) {
+                    Text("Cancel", color = PewterMuted)
+                }
+                Button(
+                    enabled = pairPinText.length == 6 && pairPortText.isNotBlank(),
+                    onClick = {
+                        showWirelessPairModal = false
+                        onPairWirelessDebugging(pairPortText, pairPinText)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CobaltBlue,
+                        contentColor = ObsidianBg
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .testTag("submit_wireless_pair_button")
+                ) {
+                    Text("Pair & Enable", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HardwareGamepadsCard(
+    bridgeState: UhidBridgeState,
+    onRefresh: () -> Unit,
+    onActivate: () -> Unit,
+    onOpenPairDialog: () -> Unit,
+    onOpenImeSettings: () -> Unit
+) {
+    val isActive = bridgeState is UhidBridgeState.Active
+    val isBusy = bridgeState is UhidBridgeState.Checking ||
+        bridgeState is UhidBridgeState.StartingAgent ||
+        bridgeState is UhidBridgeState.WaitingTrustPrompt
+    val isError = bridgeState is UhidBridgeState.Error
+
+    val borderAccent = when {
+        isActive -> SignalEmerald
+        isError -> PrecisionCrimson
+        isBusy -> CobaltBlue
+        else -> WarmAmber.copy(alpha = 0.65f)
+    }
+
+    LiquidGlassPanel(
+        shape = RoundedCornerShape(22.dp),
+        elevated = isActive,
+        accentBorderTint = borderAccent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Gamepad,
+                        contentDescription = "Hardware Gamepad Engine",
+                        tint = borderAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "OS Hardware Gamepads",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TitaniumText
+                        )
+                        Text(
+                            text = when (bridgeState) {
+                                is UhidBridgeState.Idle -> "WI-FI UDP → 4 KERNEL PADS"
+                                is UhidBridgeState.Checking -> "PROBING DEVICE BRIDGE..."
+                                is UhidBridgeState.SetupRequired ->
+                                    if (bridgeState.tcp5555Open) "LOCAL ADB READY · TAP ENABLE"
+                                    else "ENABLE ADB DEBUGGING FOR HARDWARE PADS"
+                                is UhidBridgeState.WaitingTrustPrompt -> "TAP 'ALLOW' ON SYSTEM PROMPT"
+                                is UhidBridgeState.StartingAgent -> "LAUNCHING UHID HARDWARE ENGINE..."
+                                is UhidBridgeState.Active -> "ACTIVE · ${bridgeState.backend.label.uppercase()}"
+                                is UhidBridgeState.Error -> "NEEDS ATTENTION"
+                            },
+                            fontFamily = JetBrainsMonoFamily,
+                            fontSize = 10.sp,
+                            color = borderAccent
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onRefresh,
+                    modifier = Modifier.testTag("refresh_hardware_bridge_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh hardware status",
+                        tint = BrushedSilver,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            when (bridgeState) {
+                is UhidBridgeState.Active -> {
+                    Text(
+                        text = "Every connected Wi-Fi phone automatically creates a physical OS Gamepad (/dev/uhid) on this TV or phone. No Bluetooth, root, or extra apps required.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PewterMuted
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        for (slot in 1..4) {
+                            val active = (bridgeState.activeSlotsMask and (1 shl (slot - 1))) != 0
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (active) SignalEmerald.copy(alpha = 0.2f) else GlassFillSubtle,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (active) SignalEmerald else HairlineBorder
+                                )
+                            ) {
+                                Text(
+                                    text = "HID $slot",
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (active) SignalEmerald else PewterMuted,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                is UhidBridgeState.Checking,
+                is UhidBridgeState.StartingAgent,
+                is UhidBridgeState.WaitingTrustPrompt -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = CobaltBlue,
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = if (bridgeState is UhidBridgeState.WaitingTrustPrompt) {
+                                "Check 'Always allow from this computer' and tap Allow."
+                            } else {
+                                "Connecting built-in hardware bridge..."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TitaniumText
+                        )
+                    }
+                }
+
+                is UhidBridgeState.SetupRequired -> {
+                    Text(
+                        text = bridgeState.guidance,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TitaniumText
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = GlassFillSubtle,
+                        border = BorderStroke(1.dp, GlassRimMid),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Fire TV / Redmi TV: Settings → My Fire TV / Device Preferences → Developer Options → Turn ON ADB Debugging (one time).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PewterMuted,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+
+                is UhidBridgeState.Error -> {
+                    Text(
+                        text = bridgeState.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PrecisionCrimson
+                    )
+                }
+
+                is UhidBridgeState.Idle -> {
+                    Text(
+                        text = "Registers up to 4 real Wi-Fi UDP gamepads for any Android game, emulator, or TV app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PewterMuted
+                    )
+                }
+            }
+
+            if (!isActive && !isBusy) {
+                Button(
+                    onClick = onActivate,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (bridgeState is UhidBridgeState.SetupRequired && bridgeState.tcp5555Open) SignalEmerald else BrushedSilver,
+                        contentColor = ObsidianBg
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("enable_hardware_gamepads_button")
+                ) {
+                    Text(
+                        text = if (isError) "Retry Enable Hardware Gamepads" else "Enable Hardware Gamepads",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    OutlinedButton(
+                        onClick = onOpenPairDialog,
+                        border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .testTag("pair_wireless_debugging_button")
+                    ) {
+                        Text(
+                            text = "Pair Wireless Debugging (Android 11+)",
+                            color = CobaltBlue,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(HairlineSubtle)
+            )
+
+            OutlinedButton(
+                onClick = onOpenImeSettings,
+                border = BorderStroke(1.dp, GlassRimMid),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .minimumInteractiveComponentSize()
+                    .testTag("open_ime_settings_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Keyboard,
+                    contentDescription = null,
+                    tint = BrushedSilver,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Zero-ADB Fallback · LinkPad Virtual Keyboard",
+                    color = BrushedSilver,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

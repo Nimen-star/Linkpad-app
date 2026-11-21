@@ -1,10 +1,5 @@
 package com.example.ui.screens
 
-import android.bluetooth.BluetoothAdapter
-import android.content.Intent
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -35,11 +30,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Backspace
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -70,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -81,13 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.protocol.DiscoveredHost
 import com.example.protocol.FavoriteHostEntry
-import com.example.protocol.TransportType
-import com.example.transport.BluetoothHidController
-import com.example.transport.BluetoothHidState
 import com.example.transport.ClientConnectionState
-import com.example.transport.HidDiscoveredDevice
-import com.example.transport.HidPairedTarget
-import com.example.transport.HidTargetRole
 import com.example.transport.LinkPadConstants
 import com.example.ui.components.LiquidGlassBackdrop
 import com.example.ui.components.LiquidGlassCheckRow
@@ -107,28 +93,16 @@ import com.example.ui.theme.PrecisionCrimson
 import com.example.ui.theme.SignalEmerald
 import com.example.ui.theme.TitaniumText
 import com.example.ui.theme.WarmAmber
-import com.example.ui.viewmodel.EnvironmentStatus
 
 @Composable
 fun ClientDiscoveryScreen(
     discoveredHosts: List<DiscoveredHost>,
     favoriteHosts: List<FavoriteHostEntry>,
     connectionState: ClientConnectionState,
-    hidState: BluetoothHidState,
-    hidNearbyDevices: List<HidDiscoveredDevice> = emptyList(),
-    hidIsScanning: Boolean = false,
-    environmentStatus: EnvironmentStatus,
     prefillIp: String = "",
     prefillPort: String = LinkPadConstants.HOST_UDP_PORT.toString(),
     onStartDiscovery: () -> Unit,
     onStopDiscovery: () -> Unit,
-    onRefreshBluetooth: () -> Unit,
-    onStartHidRegistration: () -> Unit,
-    onConnectHidTarget: (String) -> Unit,
-    onConnectHidByMac: (String) -> Unit = {},
-    onStartHidScan: () -> Unit = {},
-    onStopHidScan: () -> Unit = {},
-    onOpenHidController: () -> Unit,
     onOpenControllerCustomizer: () -> Unit = {},
     onClearError: () -> Unit,
     onConnectHost: (DiscoveredHost, String, Boolean) -> Unit,
@@ -139,48 +113,23 @@ fun ClientDiscoveryScreen(
     onConnectManualIp: (String, String, String, Boolean) -> Unit,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
     var pairingCode by rememberSaveable { mutableStateOf("") }
     var showManualIp by rememberSaveable { mutableStateOf(prefillIp.isNotBlank()) }
     var manualIp by rememberSaveable { mutableStateOf(prefillIp) }
     var manualPort by rememberSaveable { mutableStateOf(prefillPort) }
     var manualFavName by rememberSaveable { mutableStateOf("") }
-    var manualBtMac by rememberSaveable { mutableStateOf("") }
-    var showMacConnect by rememberSaveable { mutableStateOf(false) }
     var pendingHostForPin by remember { mutableStateOf<DiscoveredHost?>(null) }
-    var pendingPhoneHidTarget by remember { mutableStateOf<HidPairedTarget?>(null) }
-    var pendingHidLaunch by remember { mutableStateOf(false) }
-
-    val btPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        onRefreshBluetooth()
-    }
-
-    val discoverableLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        onRefreshBluetooth()
-    }
 
     DisposableEffect(Unit) {
         onStartDiscovery()
         onDispose {
             onStopDiscovery()
-            onStopHidScan()
         }
     }
 
     LaunchedEffect(connectionState) {
         if (connectionState is ClientConnectionState.NeedsPairingCode) {
             pendingHostForPin = connectionState.host
-        }
-    }
-
-    LaunchedEffect(hidState, pendingHidLaunch) {
-        if (pendingHidLaunch && hidState is BluetoothHidState.Connected) {
-            pendingHidLaunch = false
-            onOpenHidController()
         }
     }
 
@@ -222,7 +171,7 @@ fun ClientDiscoveryScreen(
                             )
                         }
                         Text(
-                            text = "Pair Controller",
+                            text = "Connect Controller",
                             style = MaterialTheme.typography.titleLarge,
                             color = TitaniumText
                         )
@@ -255,423 +204,14 @@ fun ClientDiscoveryScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Rescan",
+                                contentDescription = "Rescan Wi-Fi hosts",
                                 tint = BrushedSilver
                             )
                         }
                     }
                 }
 
-                // Native Bluetooth HID OS Gamepad Card (No keyboard switch required on TV/Phone/PC)
-                LiquidGlassPanel(
-                    shape = RoundedCornerShape(22.dp),
-                    elevated = hidState is BluetoothHidState.Connected,
-                    accentBorderTint = if (hidState is BluetoothHidState.Connected) SignalEmerald else CobaltBlue.copy(alpha = 0.45f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Gamepad,
-                                    contentDescription = null,
-                                    tint = if (hidState is BluetoothHidState.Connected) SignalEmerald else CobaltBlue,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Bluetooth OS Gamepad (No Gboard Switch)",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = TitaniumText
-                                    )
-                                    Text(
-                                        text = "Acts as a genuine hardware controller on paired Android TV, Phone, or PC",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = PewterMuted
-                                    )
-                                }
-                            }
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (!LinkPadConstants.hasBluetoothAdvertisePermission(context)) {
-                                            btPermissionLauncher.launch(
-                                                LinkPadConstants.requiredBluetoothPermissions()
-                                            )
-                                        } else {
-                                            runCatching {
-                                                discoverableLauncher.launch(
-                                                    Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
-                                                        .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 60)
-                                                )
-                                            }
-                                        }
-                                    },
-                                    border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.5f)),
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("bt_discoverable_button")
-                                ) {
-                                    Text("Discoverable", color = CobaltBlue, fontSize = 11.sp, maxLines = 1)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
-                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            )
-                                        }
-                                    },
-                                    border = BorderStroke(1.dp, GlassRimMid),
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("open_bt_settings_button")
-                                ) {
-                                    Text("Pair BT", color = BrushedSilver, fontSize = 11.sp, maxLines = 1)
-                                }
-                            }
-                        }
-
-                        when (hidState) {
-                            is BluetoothHidState.Unsupported -> {
-                                Text(
-                                    text = "Requires Android 9+ (API 28) for OS Gamepad emulation.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = PewterMuted
-                                )
-                            }
-                            is BluetoothHidState.Idle -> {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (!environmentStatus.hasBluetoothPermission) {
-                                            btPermissionLauncher.launch(
-                                                LinkPadConstants.requiredBluetoothPermissions()
-                                            )
-                                        } else {
-                                            onStartHidRegistration()
-                                        }
-                                    },
-                                    border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.6f)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("enable_hid_profile_button")
-                                ) {
-                                    Text("Activate Bluetooth Gamepad Mode", color = CobaltBlue)
-                                }
-                            }
-                            is BluetoothHidState.Registering -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        color = CobaltBlue,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Text(
-                                        text = "Registering HID hardware gamepad profile...",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = PewterMuted
-                                    )
-                                }
-                            }
-                            is BluetoothHidState.Connecting -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        color = SignalEmerald,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Text(
-                                        text = "Connecting HID to ${hidState.targetName}...",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = TitaniumText
-                                    )
-                                }
-                            }
-                            is BluetoothHidState.Connected -> {
-                                Button(
-                                    onClick = onOpenHidController,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = SignalEmerald,
-                                        contentColor = ObsidianBg
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("open_connected_hid_controller_button")
-                                ) {
-                                    Text(
-                                        text = "Open OS Controller · ${hidState.targetName}",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                            is BluetoothHidState.Ready -> {
-                                if (hidState.bondedDevices.isEmpty()) {
-                                    Text(
-                                        text = "Tap Discoverable or Scan Nearby below, or Pair BT on your TV/Phone/PC.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = PewterMuted
-                                    )
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        hidState.bondedDevices.forEach { target ->
-                                            Surface(
-                                                shape = RoundedCornerShape(14.dp),
-                                                color = GlassFillSubtle,
-                                                border = BorderStroke(1.dp, GlassRimMid),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .minimumInteractiveComponentSize()
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .clickable {
-                                                        if (target.role == HidTargetRole.PHONE) {
-                                                            pendingPhoneHidTarget = target
-                                                        } else {
-                                                            pendingHidLaunch = true
-                                                            onConnectHidTarget(target.address)
-                                                        }
-                                                    }
-                                                    .testTag("hid_bonded_device_card")
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                            text = target.name,
-                                                            style = MaterialTheme.typography.titleMedium,
-                                                            color = TitaniumText
-                                                        )
-                                                        Text(
-                                                            text = "${target.role.label} · ${target.address}",
-                                                            fontFamily = JetBrainsMonoFamily,
-                                                            fontSize = 10.sp,
-                                                            color = PewterMuted
-                                                        )
-                                                    }
-                                                    Icon(
-                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                                        contentDescription = "Connect HID to ${target.name}",
-                                                        tint = CobaltBlue,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            is BluetoothHidState.Error -> {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        text = hidState.message,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = PrecisionCrimson
-                                    )
-                                    OutlinedButton(
-                                        onClick = {
-                                            if (!environmentStatus.hasBluetoothPermission) {
-                                                btPermissionLauncher.launch(
-                                                    LinkPadConstants.requiredBluetoothPermissions()
-                                                )
-                                            } else {
-                                                onStartHidRegistration()
-                                            }
-                                        },
-                                        border = BorderStroke(1.dp, GlassRimMid),
-                                        modifier = Modifier.minimumInteractiveComponentSize()
-                                    ) {
-                                        Text("Retry HID Setup", color = BrushedSilver, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-
-                        // Nearby Bluetooth Discovery & Direct MAC Address Connect
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    if (!LinkPadConstants.hasBluetoothScanPermission(context) ||
-                                        !environmentStatus.hasBluetoothPermission
-                                    ) {
-                                        btPermissionLauncher.launch(
-                                            LinkPadConstants.requiredBluetoothPermissions()
-                                        )
-                                    } else if (hidIsScanning) {
-                                        onStopHidScan()
-                                    } else {
-                                        onStartHidScan()
-                                    }
-                                },
-                                border = BorderStroke(1.dp, if (hidIsScanning) SignalEmerald else GlassRimMid),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("bt_scan_nearby_button")
-                            ) {
-                                if (hidIsScanning) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(13.dp),
-                                        color = SignalEmerald,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Stop BT Scan", color = SignalEmerald, fontSize = 11.sp, maxLines = 1)
-                                } else {
-                                    Text("Scan Nearby BT", color = BrushedSilver, fontSize = 11.sp, maxLines = 1)
-                                }
-                            }
-
-                            OutlinedButton(
-                                onClick = { showMacConnect = !showMacConnect },
-                                border = BorderStroke(1.dp, if (showMacConnect) CobaltBlue else GlassRimMid),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("toggle_bt_mac_button")
-                            ) {
-                                Text(
-                                    text = if (showMacConnect) "Hide BT MAC" else "Connect by MAC",
-                                    color = if (showMacConnect) CobaltBlue else BrushedSilver,
-                                    fontSize = 11.sp,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        if (hidNearbyDevices.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = "NEARBY BLUETOOTH DEVICES · TAP TO PAIR & CONNECT",
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontSize = 10.sp,
-                                    color = PewterMuted
-                                )
-                                hidNearbyDevices.forEach { dev ->
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = GlassFillSubtle,
-                                        border = BorderStroke(1.dp, GlassRimMid),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .minimumInteractiveComponentSize()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable {
-                                                pendingHidLaunch = true
-                                                onConnectHidByMac(dev.address)
-                                            }
-                                            .testTag("hid_nearby_device_card")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = dev.name,
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    color = TitaniumText
-                                                )
-                                                Text(
-                                                    text = "${if (dev.bonded) "Paired" else "New"} · ${dev.address}",
-                                                    fontFamily = JetBrainsMonoFamily,
-                                                    fontSize = 10.sp,
-                                                    color = PewterMuted
-                                                )
-                                            }
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                                contentDescription = "Pair and connect ${dev.name}",
-                                                tint = CobaltBlue,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        AnimatedVisibility(visible = showMacConnect) {
-                            val normalizedMac = BluetoothHidController.normalizeMacAddress(manualBtMac)
-                            Column(
-                                modifier = Modifier.padding(top = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                LiquidGlassTextField(
-                                    value = manualBtMac,
-                                    onValueChange = { if (it.length <= 20) manualBtMac = it },
-                                    label = "DIRECT BLUETOOTH MAC ADDRESS",
-                                    placeholder = "AA:BB:CC:DD:EE:FF",
-                                    textStyle = TextStyle(
-                                        fontFamily = JetBrainsMonoFamily,
-                                        fontSize = 14.sp,
-                                        color = TitaniumText
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("manual_bt_mac_input")
-                                )
-                                Button(
-                                    onClick = {
-                                        if (!environmentStatus.hasBluetoothPermission) {
-                                            btPermissionLauncher.launch(
-                                                LinkPadConstants.requiredBluetoothPermissions()
-                                            )
-                                        } else {
-                                            pendingHidLaunch = true
-                                            onConnectHidByMac(manualBtMac)
-                                        }
-                                    },
-                                    enabled = normalizedMac != null,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = CobaltBlue,
-                                        contentColor = ObsidianBg
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("connect_bt_mac_button")
-                                ) {
-                                    Text("Pair & Connect HID via MAC", fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Segmented Glass Pairing Code Input (for LinkPad Wi-Fi / PC Host / Android Host)
+                // Segmented Glass Pairing Code Input (for LinkPad Wi-Fi UDP Host on PC, TV, or Phone)
                 LiquidGlassPanel(
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -685,11 +225,18 @@ fun ClientDiscoveryScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "HOST PAIRING CODE",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = PewterMuted
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "HOST PAIRING CODE",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = PewterMuted
+                                )
+                                Text(
+                                    text = "Enter the 6-digit code shown on your PC, TV, or Host phone",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = PewterMuted
+                                )
+                            }
                             if (pairingCode.isNotEmpty()) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     IconButton(
@@ -879,10 +426,10 @@ fun ClientDiscoveryScreen(
                     }
                 }
 
-                // Discovered Hosts List
+                // Discovered Wi-Fi Hosts List
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "VERIFIED LINKPAD HOSTS · ${discoveredHosts.size}",
+                        text = "WI-FI UDP HOSTS · ${discoveredHosts.size}",
                         style = MaterialTheme.typography.labelMedium,
                         color = PewterMuted
                     )
@@ -900,23 +447,28 @@ fun ClientDiscoveryScreen(
                             ) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
-                                    color = PewterMuted,
+                                    color = SignalEmerald,
                                     strokeWidth = 2.dp
                                 )
-                                Text(
-                                    text = "Probing Wi-Fi & verified Bluetooth Hosts...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = PewterMuted
-                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "Searching Wi-Fi network for LinkPad Hosts...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TitaniumText
+                                    )
+                                    Text(
+                                        text = "Open LinkPad Host on your TV, phone, or LinkPadHost.exe on PC.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = PewterMuted
+                                    )
+                                }
                             }
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             discoveredHosts.forEach { host ->
                                 val isFav = favoriteHosts.any {
-                                    it.address == host.hostAddress &&
-                                        it.port == host.port &&
-                                        it.bluetoothAddress == host.bluetoothAddress
+                                    it.address == host.hostAddress && it.port == host.port
                                 }
                                 DiscoveredHostCard(
                                     host = host,
@@ -930,8 +482,7 @@ fun ClientDiscoveryScreen(
                                                     name = host.name,
                                                     address = host.hostAddress,
                                                     port = host.port,
-                                                    transport = host.transport,
-                                                    bluetoothAddress = host.bluetoothAddress
+                                                    transport = host.transport
                                                 )
                                             )
                                         } else if (pairingCode.length == 6) {
@@ -941,53 +492,6 @@ fun ClientDiscoveryScreen(
                                         }
                                     }
                                 )
-                            }
-                        }
-                    }
-                }
-
-                // Bluetooth Permission Row
-                if (!environmentStatus.hasBluetoothPermission) {
-                    LiquidGlassPanel(
-                        shape = RoundedCornerShape(16.dp),
-                        subtle = true,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Bluetooth,
-                                    contentDescription = null,
-                                    tint = CobaltBlue,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "Bluetooth Permission",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = TitaniumText
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    btPermissionLauncher.launch(
-                                        LinkPadConstants.requiredBluetoothPermissions()
-                                    )
-                                },
-                                border = BorderStroke(1.dp, GlassRimMid),
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("grant_bluetooth_button")
-                            ) {
-                                Text("Allow", color = CobaltBlue, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1029,7 +533,7 @@ fun ClientDiscoveryScreen(
                                     value = manualFavName,
                                     onValueChange = { if (it.length <= 24) manualFavName = it },
                                     label = "LABEL (OPTIONAL)",
-                                    placeholder = "My Gaming PC",
+                                    placeholder = "Living Room Fire TV",
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1099,55 +603,6 @@ fun ClientDiscoveryScreen(
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    pendingPhoneHidTarget?.let { phoneTarget ->
-        LiquidGlassDialog(
-            onDismissRequest = { pendingPhoneHidTarget = null },
-            accentColor = CobaltBlue,
-            maxWidthDp = 420
-        ) {
-            Text(
-                text = "Connect OS Gamepad to Phone?",
-                style = MaterialTheme.typography.titleLarge,
-                color = TitaniumText
-            )
-            Text(
-                text = "${phoneTarget.name} looks like another phone. Bluetooth OS Gamepad sends hardware inputs directly to the target OS without a pairing code — do not open OS Gamepad on both phones simultaneously. For Phone-to-Phone LinkPad play, start Host Mode on the receiving phone and enter its 6-digit code.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = PewterMuted
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { pendingPhoneHidTarget = null },
-                    border = BorderStroke(1.dp, GlassRimMid),
-                    modifier = Modifier
-                        .weight(1f)
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Text("Cancel", color = PewterMuted)
-                }
-                Button(
-                    onClick = {
-                        pendingPhoneHidTarget = null
-                        pendingHidLaunch = true
-                        onConnectHidTarget(phoneTarget.address)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = CobaltBlue,
-                        contentColor = ObsidianBg
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Text("Connect OS HID", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1306,21 +761,12 @@ private fun FavoriteHostCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = TitaniumText
                     )
-                    if (favorite.transport == TransportType.WIFI_UDP) {
-                        TapToRevealIpChip(
-                            address = favorite.address,
-                            port = favorite.port,
-                            compact = true,
-                            testTag = "fav_host_ip_reveal"
-                        )
-                    } else {
-                        Text(
-                            text = "BT · ${favorite.address}",
-                            fontFamily = JetBrainsMonoFamily,
-                            fontSize = 11.sp,
-                            color = PewterMuted
-                        )
-                    }
+                    TapToRevealIpChip(
+                        address = favorite.address,
+                        port = favorite.port,
+                        compact = true,
+                        testTag = "fav_host_ip_reveal"
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1354,8 +800,7 @@ private fun DiscoveredHostCard(
     onToggleFavorite: () -> Unit,
     onClick: () -> Unit
 ) {
-    val isUdp = host.transport == TransportType.WIFI_UDP
-    val accent = if (isUdp) SignalEmerald else CobaltBlue
+    val accent = SignalEmerald
     var focused by remember { mutableStateOf(false) }
 
     LiquidGlassPanel(
@@ -1389,7 +834,7 @@ private fun DiscoveredHostCard(
                     border = BorderStroke(1.dp, GlassRimMid)
                 ) {
                     Icon(
-                        imageVector = if (isUdp) Icons.Default.Wifi else Icons.Default.Bluetooth,
+                        imageVector = Icons.Default.Wifi,
                         contentDescription = host.transport.badge,
                         tint = accent,
                         modifier = Modifier
@@ -1404,21 +849,12 @@ private fun DiscoveredHostCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = TitaniumText
                     )
-                    if (isUdp) {
-                        TapToRevealIpChip(
-                            address = host.hostAddress,
-                            port = host.port,
-                            compact = true,
-                            testTag = "discovered_host_ip_reveal"
-                        )
-                    } else {
-                        Text(
-                            text = "BT · ${host.hostAddress}",
-                            fontFamily = JetBrainsMonoFamily,
-                            fontSize = 11.sp,
-                            color = PewterMuted
-                        )
-                    }
+                    TapToRevealIpChip(
+                        address = host.hostAddress,
+                        port = host.port,
+                        compact = true,
+                        testTag = "discovered_host_ip_reveal"
+                    )
                 }
             }
 
@@ -1426,18 +862,16 @@ private fun DiscoveredHostCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                if (isUdp) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        for (i in 0 until 4) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (i < host.activePlayers) accent else HairlineBorder
-                                    )
-                            )
-                        }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (i in 0 until 4) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (i < host.activePlayers) accent else HairlineBorder
+                                )
+                        )
                     }
                 }
                 IconButton(

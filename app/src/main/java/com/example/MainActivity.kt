@@ -44,13 +44,10 @@ class MainActivity : ComponentActivity() {
                 val hostActive by viewModel.hostActive.collectAsStateWithLifecycle()
                 val pairingCode by viewModel.pairingCode.collectAsStateWithLifecycle()
                 val localIp by viewModel.hostLocalIp.collectAsStateWithLifecycle()
-                val btHostActive by viewModel.hostBluetoothActive.collectAsStateWithLifecycle()
                 val hostSlots by viewModel.hostSlots.collectAsStateWithLifecycle()
+                val hardwareBridgeState by viewModel.hardwareBridgeState.collectAsStateWithLifecycle()
                 val discoveredHosts by viewModel.discoveredHosts.collectAsStateWithLifecycle()
                 val clientState by viewModel.clientConnectionState.collectAsStateWithLifecycle()
-                val hidState by viewModel.hidState.collectAsStateWithLifecycle()
-                val hidNearbyDevices by viewModel.hidNearbyDevices.collectAsStateWithLifecycle()
-                val hidIsScanning by viewModel.hidIsScanning.collectAsStateWithLifecycle()
 
                 NavHost(
                     navController = navController,
@@ -120,18 +117,14 @@ class MainActivity : ComponentActivity() {
                             hostActive = hostActive,
                             pairingCode = pairingCode,
                             localIp = localIp,
-                            bluetoothHostingActive = btHostActive,
                             slots = hostSlots,
-                            environmentStatus = envStatus,
+                            hardwareBridgeState = hardwareBridgeState,
                             allowFavoritesWithoutCode = settings.allowFavoritesWithoutCode,
                             trustedDeviceCount = settings.trustedClientIds.size,
                             onBack = { navController.popBackStack() },
                             onStartHost = { viewModel.startHostSession() },
                             onStopHost = { viewModel.stopHostSession() },
                             onRegenerateCode = { viewModel.regeneratePairingCode() },
-                            onToggleBluetoothHost = { enabled ->
-                                viewModel.toggleBluetoothHosting(enabled)
-                            },
                             onUpdateSlotKeymap = { slot, profile ->
                                 viewModel.updateSlotKeymap(slot, profile)
                             },
@@ -144,11 +137,17 @@ class MainActivity : ComponentActivity() {
                             onClearTrustedDevices = {
                                 viewModel.clearTrustedDevices()
                             },
-                            onOpenControllerDiscovery = {
-                                navController.navigate(Routes.CLIENT_DISCOVERY)
-                            },
                             onRefreshSystemStatus = {
                                 viewModel.refreshSystemStatus()
+                            },
+                            onRefreshHardwareBridge = {
+                                viewModel.refreshHardwareBridge()
+                            },
+                            onActivateHardwareGamepads = {
+                                viewModel.activateHardwareGamepads()
+                            },
+                            onPairWirelessDebugging = { port, code ->
+                                viewModel.pairWirelessDebugging(port, code)
                             }
                         )
                     }
@@ -174,24 +173,10 @@ class MainActivity : ComponentActivity() {
                             discoveredHosts = discoveredHosts,
                             favoriteHosts = settings.favoriteHosts,
                             connectionState = clientState,
-                            hidState = hidState,
-                            hidNearbyDevices = hidNearbyDevices,
-                            hidIsScanning = hidIsScanning,
-                            environmentStatus = envStatus,
                             prefillIp = prefillIp,
                             prefillPort = prefillPort,
                             onStartDiscovery = { viewModel.startDiscovery() },
                             onStopDiscovery = { viewModel.stopDiscovery() },
-                            onRefreshBluetooth = { viewModel.refreshBluetoothDiscovery() },
-                            onStartHidRegistration = { viewModel.startBluetoothHidRegistration() },
-                            onConnectHidTarget = { addr -> viewModel.connectBluetoothHidTarget(addr) },
-                            onConnectHidByMac = { mac -> viewModel.connectBluetoothHidByMac(mac) },
-                            onStartHidScan = { viewModel.startBluetoothHidScan() },
-                            onStopHidScan = { viewModel.stopBluetoothHidScan() },
-                            onOpenHidController = {
-                                viewModel.markHidControllerActive()
-                                navController.navigate(Routes.CONTROLLER)
-                            },
                             onOpenControllerCustomizer = {
                                 navController.navigate("${Routes.CONTROLLER}?preview=true")
                             },
@@ -240,7 +225,6 @@ class MainActivity : ComponentActivity() {
                         RetroControllerScreen(
                             previewMode = isPreview,
                             connectionState = clientState,
-                            hidState = hidState,
                             controllerLayout = settings.controllerLayout,
                             controllerTheme = settings.controllerTheme,
                             hapticStrength = settings.hapticStrength,

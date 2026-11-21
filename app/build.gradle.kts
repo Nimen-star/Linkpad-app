@@ -70,6 +70,12 @@ android {
   }
 }
 
+configurations.configureEach {
+  if (name.contains("UnitTest", ignoreCase = true)) {
+    exclude(group = "org.conscrypt", module = "conscrypt-android")
+  }
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -121,6 +127,8 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.libadb.android)
+  implementation(libs.conscrypt.android)
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

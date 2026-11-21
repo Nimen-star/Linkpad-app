@@ -5,21 +5,29 @@ import com.example.protocol.ControlOffset
 import com.example.protocol.ControllerLayout
 import com.example.protocol.GyroMode
 import com.example.protocol.PadButton
-import com.example.transport.BluetoothHidController
+import com.example.uhid.AdbIdentityStore
+import com.example.uhid.UhidProtocol
 import com.example.ui.components.GyroMotionMath
 import com.example.ui.components.formatTapToRevealIpText
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.security.KeyPairGenerator
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import kotlin.math.cos
 import kotlin.math.sin
 
 class LinkPadFeatureTests {
 
     @Test
-    fun hidDescriptor_declaresReportIdAndResetsPhysicalBounds() {
-        val desc = BluetoothHidController.GAMEPAD_HID_DESCRIPTOR
+    fun uhidDescriptor_declaresReportIdAndResetsPhysicalBounds() {
+        val desc = UhidProtocol.GAMEPAD_HID_DESCRIPTOR
         // Must declare Report ID (1): 0x85, 0x01
         val hasReportId = desc.indices.any { i ->
             i + 1 < desc.size && desc[i] == 0x85.toByte() && desc[i + 1] == 0x01.toByte()
@@ -35,12 +43,12 @@ class LinkPadFeatureTests {
 
     @Test
     fun encodeHidReportPayload_mapsNeutralButtonsHatAndSticksCorrectly() {
-        val neutral = BluetoothHidController.encodeHidReportPayload(0, 0, 0, 0, 0)
-        assertArrayEquals(BluetoothHidController.DEFAULT_REPORT_BYTES, neutral)
+        val neutral = UhidProtocol.encodeHidReportPayload(0, 0, 0, 0, 0)
+        assertArrayEquals(UhidProtocol.NEUTRAL_PAYLOAD, neutral)
 
         // Verify Android/Linux BTN_GAMEPAD mapping (A=bit0, B=bit1, X=bit3, Y=bit4) + UP+RIGHT Hat=2
         val mask = PadButton.A.bit or PadButton.X.bit or PadButton.UP.bit or PadButton.RIGHT.bit
-        val active = BluetoothHidController.encodeHidReportPayload(
+        val active = UhidProtocol.encodeHidReportPayload(
             buttonMask = mask,
             lx = (-127).toByte(),
             ly = 127.toByte(),
@@ -56,6 +64,65 @@ class LinkPadFeatureTests {
         assertEquals(255.toByte(), active[4])
         assertEquals(128.toByte(), active[5])
         assertEquals(129.toByte(), active[6])
+    }
+
+    @Test
+    fun uhidBinaryEvents_packCreate2Input2AndPipeFramesAccurately() {
+        val createEvent = UhidProtocol.buildUhidCreate2Event(
+            name = "LinkPad Wireless Pad 1",
+            phys = "linkpad/slot1",
+            uniq = "lp-slot-1",
+            vendorId = 0x1209,
+            productId = 0x4C51,
+            byteOrder = ByteOrder.LITTLE_ENDIAN
+        )
+        assertEquals(4380, createEvent.size)
+        val buf = ByteBuffer.wrap(createEvent).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(UhidProtocol.UHID_CREATE2, buf.getInt(0))
+        assertEquals(UhidProtocol.GAMEPAD_HID_DESCRIPTOR.size, buf.getShort(260).toInt() and 0xFFFF)
+        assertEquals(0x1209, buf.getInt(264))
+        assertEquals(0x4C51, buf.getInt(268))
+
+        val payload = UhidProtocol.encodeHidReportPayload(PadButton.A.bit, 12, -34, 56, -78)
+        val inputEvent = UhidProtocol.buildUhidInput2Event(payload, ByteOrder.LITTLE_ENDIAN)
+        assertEquals(14, inputEvent.size)
+        val inBuf = ByteBuffer.wrap(inputEvent).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(UhidProtocol.UHID_INPUT2, inBuf.getInt(0))
+        assertEquals(8, inBuf.getShort(4).toInt())
+        assertEquals(UhidProtocol.REPORT_ID, inputEvent[6])
+        assertEquals(payload[0], inputEvent[7])
+
+        val wire = UhidProtocol.encodePipeState(
+            cmd = UhidProtocol.CMD_INPUT,
+            slot = 3,
+            seq = 42,
+            buttonMask = PadButton.A.bit or PadButton.START.bit,
+            lx = (-100).toByte(),
+            ly = 100,
+            rx = 50,
+            ry = (-50).toByte()
+        )
+        val decoded = UhidProtocol.decodePipeState(wire)
+        assertNotNull(decoded)
+        assertEquals(3, decoded!!.slot)
+        assertEquals(42, decoded.seq)
+        assertEquals(PadButton.A.bit or PadButton.START.bit, decoded.buttonMask)
+        assertEquals((-100).toByte(), decoded.lx)
+        assertEquals(100.toByte(), decoded.ly)
+        assertEquals(50.toByte(), decoded.rx)
+        assertEquals((-50).toByte(), decoded.ry)
+    }
+
+    @Test
+    fun adbIdentityStore_buildsValidSelfSignedX509Certificate() {
+        val kpg = KeyPairGenerator.getInstance("RSA")
+        kpg.initialize(2048)
+        val kp = kpg.generateKeyPair()
+        val der = AdbIdentityStore.buildSelfSignedX509Der(kp.public, kp.private)
+        val cert = CertificateFactory.getInstance("X.509")
+            .generateCertificate(ByteArrayInputStream(der)) as X509Certificate
+        cert.verify(kp.public)
+        assertTrue(cert.subjectX500Principal.name.contains("LinkPad"))
     }
 
     @Test
@@ -189,21 +256,5 @@ class LinkPadFeatureTests {
         assertEquals(24f, updated.customizationFor(ControllerLayout.RETRO_HANDHELD).dpadOffset.x, 0.001f)
         assertEquals(1.0f, updated.customizationFor(ControllerLayout.DUAL_STICK).scale, 0.001f)
         assertEquals(0f, updated.customizationFor(ControllerLayout.DUAL_STICK).dpadOffset.x, 0.001f)
-    }
-
-    @Test
-    fun normalizeMacAddress_formatsLowercaseDashesAndColons() {
-        assertEquals(
-            "AA:BB:CC:DD:EE:FF",
-            BluetoothHidController.normalizeMacAddress("  aa-bb-cc-dd-ee-ff ")
-        )
-        assertEquals(
-            "12:34:56:78:9A:BC",
-            BluetoothHidController.normalizeMacAddress("123456789abc")
-        )
-        assertEquals(
-            "NOT_A_MAC",
-            BluetoothHidController.normalizeMacAddress("not_a_mac")
-        )
     }
 }

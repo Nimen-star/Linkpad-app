@@ -17,6 +17,7 @@ import com.example.protocol.PacketType
 import com.example.protocol.PlayerSlotState
 import com.example.protocol.RejectReason
 import com.example.protocol.TransportType
+import com.example.uhid.LinkPadHardwareBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +56,7 @@ class HostSessionManager(private val context: Context) {
         val clientId: Int = 0
     )
 
+    val hardwareBridge = LinkPadHardwareBridge(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val slotLock = Any()
     private val slots = arrayOfNulls<ClientEndpoint>(LinkPadConstants.MAX_PLAYERS)
@@ -123,6 +125,7 @@ class HostSessionManager(private val context: Context) {
         startBeaconBroadcaster()
         registerNsdService()
         startWatchdog()
+        hardwareBridge.refreshProbe()
 
         if (enableBluetooth) {
             startBluetoothServer()
@@ -153,6 +156,7 @@ class HostSessionManager(private val context: Context) {
             existing
         }
         removed?.let { endpoint ->
+            hardwareBridge.destroySlot(endpoint.slot)
             val bye = InputPacket(type = PacketType.BYE, slot = endpoint.slot)
             sendToEndpoint(endpoint, bye)
             runCatching { endpoint.btSocket?.close() }
@@ -202,6 +206,7 @@ class HostSessionManager(private val context: Context) {
         udpSocket = null
         unregisterNsdService()
         releaseMulticastLock()
+        hardwareBridge.shutdownAgent()
 
         InputBridgeBus.setHostActive(false)
     }
@@ -477,6 +482,14 @@ class HostSessionManager(private val context: Context) {
                         newMask = packet.buttonMask,
                         keymapProfile = keymap
                     )
+                    hardwareBridge.sendSlotState(
+                        slot = matchedSlot,
+                        buttonMask = packet.buttonMask,
+                        lx = packet.lx,
+                        ly = packet.ly,
+                        rx = packet.rx,
+                        ry = packet.ry
+                    )
                     if (stateChanged) {
                         publishSlots()
                     }
@@ -524,16 +537,18 @@ class HostSessionManager(private val context: Context) {
     }
 
     private fun removeClientByKey(clientKey: String) {
-        val changed = synchronized(slotLock) {
+        val removedSlot = synchronized(slotLock) {
             val idx = slots.indexOfFirst { it?.key == clientKey }
             if (idx >= 0) {
+                val s = slots[idx]?.slot ?: (idx + 1)
                 slots[idx] = null
-                true
+                s
             } else {
-                false
+                null
             }
         }
-        if (changed) {
+        if (removedSlot != null) {
+            hardwareBridge.destroySlot(removedSlot)
             publishSlots()
         }
     }
@@ -603,18 +618,19 @@ class HostSessionManager(private val context: Context) {
                 InputBridgeBus.setLocalIpAddress(LinkPadConstants.findPrimaryLocalIpv4(context))
 
                 val now = System.currentTimeMillis()
-                var evicted = false
+                val evictedSlots = mutableListOf<Int>()
                 synchronized(slotLock) {
                     for (i in slots.indices) {
                         val endpoint = slots[i] ?: continue
                         if (now - endpoint.lastSeenMs > LinkPadConstants.CLIENT_TIMEOUT_MS) {
                             runCatching { endpoint.btSocket?.close() }
+                            evictedSlots.add(endpoint.slot)
                             slots[i] = null
-                            evicted = true
                         }
                     }
                 }
-                if (evicted) {
+                if (evictedSlots.isNotEmpty()) {
+                    evictedSlots.forEach { hardwareBridge.destroySlot(it) }
                     publishSlots()
                 }
             }

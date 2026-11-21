@@ -1,7 +1,6 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -25,13 +24,11 @@ import com.example.protocol.PlayerSlotState
 import com.example.protocol.ProPaddleConfig
 import com.example.protocol.RecentHostEntry
 import com.example.protocol.TransportType
-import com.example.transport.BluetoothHidController
-import com.example.transport.BluetoothHidState
 import com.example.transport.ClientConnectionState
 import com.example.transport.ControllerClientSession
-import com.example.transport.HidDiscoveredDevice
 import com.example.transport.HostDiscoveryManager
 import com.example.transport.LinkPadConstants
+import com.example.uhid.UhidBridgeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,27 +37,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class EnvironmentStatus(
-    val wifiConnected: Boolean = false,
-    val bluetoothEnabled: Boolean = false,
-    val hasBluetoothPermission: Boolean = false
+    val wifiConnected: Boolean = false
 )
 
 class LinkPadViewModel(application: Application) : AndroidViewModel(application) {
-
-    private enum class ActiveControllerTransport {
-        NONE,
-        HOST_PROTOCOL,
-        BLUETOOTH_HID
-    }
 
     private val appContext = application.applicationContext
     private val preferences = LinkPadPreferences(appContext)
     private val discoveryManager = HostDiscoveryManager(appContext)
     private val clientSession = ControllerClientSession(appContext)
-    private val bluetoothHidController = BluetoothHidController(appContext)
-
-    @Volatile
-    private var activeTransport: ActiveControllerTransport = ActiveControllerTransport.NONE
 
     val settings: StateFlow<UserSettings> = preferences.settings.stateIn(
         viewModelScope,
@@ -71,15 +56,13 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
     val hostActive: StateFlow<Boolean> = InputBridgeBus.hostActive
     val pairingCode: StateFlow<String> = InputBridgeBus.pairingCode
     val hostLocalIp: StateFlow<String> = InputBridgeBus.localIpAddress
-    val hostBluetoothActive: StateFlow<Boolean> = InputBridgeBus.bluetoothHostingActive
     val hostPacketsPerSecond: StateFlow<Int> = InputBridgeBus.packetsPerSecond
     val hostSlots: StateFlow<List<PlayerSlotState>> = InputBridgeBus.slots
+    val hardwareBridgeState: StateFlow<UhidBridgeState> =
+        HostRuntimeHolder.hardwareBridgeState(appContext)
 
     val discoveredHosts: StateFlow<List<DiscoveredHost>> = discoveryManager.hosts
     val clientConnectionState: StateFlow<ClientConnectionState> = clientSession.connectionState
-    val hidState: StateFlow<BluetoothHidState> = bluetoothHidController.state
-    val hidNearbyDevices: StateFlow<List<HidDiscoveredDevice>> = bluetoothHidController.nearbyDevices
-    val hidIsScanning: StateFlow<Boolean> = bluetoothHidController.isScanning
 
     private val _environmentStatus = MutableStateFlow(EnvironmentStatus())
     val environmentStatus: StateFlow<EnvironmentStatus> = _environmentStatus
@@ -125,19 +108,7 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
             caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true ||
             localIp != "127.0.0.1"
 
-        val btAdapter = (appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-        val hasBtPerm = LinkPadConstants.hasBluetoothConnectPermission(appContext)
-        val btOn = runCatching { btAdapter?.isEnabled == true }.getOrDefault(false)
-
-        _environmentStatus.value = EnvironmentStatus(
-            wifiConnected = wifiUp,
-            bluetoothEnabled = btOn,
-            hasBluetoothPermission = hasBtPerm
-        )
-
-        if (hasBtPerm && btOn) {
-            bluetoothHidController.refreshStateFromProxy()
-        }
+        _environmentStatus.value = EnvironmentStatus(wifiConnected = wifiUp)
     }
 
     fun setDeviceName(name: String) {
@@ -230,49 +201,9 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun startBluetoothHidRegistration() {
-        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
-        bluetoothHidController.startRegistration(settings.value.deviceName)
-        refreshSystemStatus()
-    }
-
-    fun connectBluetoothHidTarget(address: String) {
-        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
-        bluetoothHidController.connectToTarget(address)
-    }
-
-    fun connectBluetoothHidByMac(mac: String) {
-        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
-        bluetoothHidController.connectByMacAddress(mac)
-    }
-
-    fun startBluetoothHidScan() {
-        bluetoothHidController.setHostModeBlocking(InputBridgeBus.hostActive.value)
-        bluetoothHidController.startNearbyScan()
-    }
-
-    fun stopBluetoothHidScan() {
-        bluetoothHidController.stopNearbyScan()
-    }
-
-    fun markHidControllerActive() {
-        clientSession.disconnect()
-        activeTransport = ActiveControllerTransport.BLUETOOTH_HID
-    }
-
-    fun disconnectBluetoothHid() {
-        bluetoothHidController.disconnectHost()
-        if (activeTransport == ActiveControllerTransport.BLUETOOTH_HID) {
-            activeTransport = ActiveControllerTransport.NONE
-        }
-    }
-
     fun startHostSession() {
         disconnectClient()
-        bluetoothHidController.setHostModeBlocking(true)
         val currentSettings = settings.value
-        val hasBt = LinkPadConstants.hasBluetoothConnectPermission(appContext) &&
-            _environmentStatus.value.bluetoothEnabled
         val manager = HostRuntimeHolder.getOrCreate(appContext)
         manager.onTrustClientId = { trustedId ->
             viewModelScope.launch {
@@ -285,24 +216,30 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
         )
         manager.startHosting(
             deviceName = currentSettings.deviceName,
-            enableBluetooth = hasBt,
+            enableBluetooth = false,
             initialKeymaps = currentSettings.slotKeymaps
         )
         ControllerHostService.start(
             context = appContext,
             deviceName = currentSettings.deviceName,
-            enableBluetooth = hasBt
+            enableBluetooth = false
         )
     }
 
     fun stopHostSession() {
         ControllerHostService.stop(appContext)
-        bluetoothHidController.setHostModeBlocking(false)
     }
 
-    fun toggleBluetoothHosting(enabled: Boolean) {
-        HostRuntimeHolder.setBluetoothEnabled(enabled)
-        refreshSystemStatus()
+    fun refreshHardwareBridge() {
+        HostRuntimeHolder.refreshHardwareBridge(appContext)
+    }
+
+    fun activateHardwareGamepads() {
+        HostRuntimeHolder.activateHardwareGamepads(appContext)
+    }
+
+    fun pairWirelessDebugging(portText: String, pairingCode: String) {
+        HostRuntimeHolder.pairWirelessDebugging(appContext, portText, pairingCode)
     }
 
     fun regeneratePairingCode() {
@@ -326,14 +263,6 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
 
     fun startDiscovery() {
         discoveryManager.startDiscovery()
-        refreshSystemStatus()
-    }
-
-    fun refreshBluetoothDiscovery() {
-        discoveryManager.refreshPairedBluetoothDevices()
-        if (hidState.value is BluetoothHidState.Ready || hidState.value is BluetoothHidState.Error) {
-            bluetoothHidController.refreshStateFromProxy()
-        }
         refreshSystemStatus()
     }
 
@@ -401,7 +330,7 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
             hostAddress = favorite.address,
             port = favorite.port,
             bluetoothAddress = favorite.bluetoothAddress,
-            transport = favorite.transport
+            transport = TransportType.WIFI_UDP
         )
         viewModelScope.launch {
             val cid = preferences.getOrCreateClientId()
@@ -413,7 +342,6 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
                 trustedFavoriteMode = true
             )
             if (success) {
-                activeTransport = ActiveControllerTransport.HOST_PROTOCOL
                 preferences.addRecentHost(
                     RecentHostEntry(
                         name = host.name,
@@ -447,7 +375,6 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
                 trustedFavoriteMode = false
             )
             if (success) {
-                activeTransport = ActiveControllerTransport.HOST_PROTOCOL
                 preferences.addRecentHost(
                     RecentHostEntry(
                         name = host.name,
@@ -513,33 +440,16 @@ class LinkPadViewModel(application: Application) : AndroidViewModel(application)
         rx: Byte,
         ry: Byte
     ) {
-        if (activeTransport == ActiveControllerTransport.BLUETOOTH_HID &&
-            hidState.value is BluetoothHidState.Connected
-        ) {
-            bluetoothHidController.sendGamepadState(buttonMask, lx, ly, rx, ry)
-        } else {
-            clientSession.sendControllerState(buttonMask, layout, lx, ly, rx, ry)
-        }
+        clientSession.sendControllerState(buttonMask, layout, lx, ly, rx, ry)
     }
 
     fun disconnectClient() {
-        when (activeTransport) {
-            ActiveControllerTransport.HOST_PROTOCOL -> clientSession.disconnect()
-            ActiveControllerTransport.BLUETOOTH_HID -> bluetoothHidController.disconnectHost()
-            ActiveControllerTransport.NONE -> {
-                clientSession.disconnect()
-                if (hidState.value is BluetoothHidState.Connected) {
-                    bluetoothHidController.disconnectHost()
-                }
-            }
-        }
-        activeTransport = ActiveControllerTransport.NONE
+        clientSession.disconnect()
     }
 
     override fun onCleared() {
         discoveryManager.stopDiscovery()
         clientSession.disconnect()
-        bluetoothHidController.stop()
         super.onCleared()
     }
 }

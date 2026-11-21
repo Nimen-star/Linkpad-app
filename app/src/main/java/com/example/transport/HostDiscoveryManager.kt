@@ -1,18 +1,10 @@
 package com.example.transport
 
-import android.annotation.SuppressLint
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.ParcelUuid
-import androidx.core.content.ContextCompat
 import com.example.protocol.BinaryProtocol
 import com.example.protocol.DiscoveredHost
 import com.example.protocol.PacketType
@@ -54,7 +46,6 @@ class HostDiscoveryManager(private val context: Context) {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nsdManager: NsdManager? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
-    private var uuidReceiver: BroadcastReceiver? = null
 
     fun startDiscovery() {
         stopDiscovery()
@@ -64,8 +55,6 @@ class HostDiscoveryManager(private val context: Context) {
         acquireMulticastLock()
         startBeaconListener()
         startNsdDiscovery()
-        registerBtUuidReceiver()
-        refreshPairedBluetoothDevices()
 
         pruneJob = scope.launch {
             while (isActive) {
@@ -75,9 +64,7 @@ class HostDiscoveryManager(private val context: Context) {
                 val iterator = hostMap.entries.iterator()
                 while (iterator.hasNext()) {
                     val entry = iterator.next()
-                    if (entry.value.transport == TransportType.WIFI_UDP &&
-                        now - entry.value.lastSeenMs > 5_500L
-                    ) {
+                    if (now - entry.value.lastSeenMs > 5_500L) {
                         iterator.remove()
                         changed = true
                     }
@@ -85,98 +72,6 @@ class HostDiscoveryManager(private val context: Context) {
                 if (changed) publishHosts()
             }
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun refreshPairedBluetoothDevices() {
-        if (!LinkPadConstants.hasBluetoothConnectPermission(context)) return
-        val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-            ?: return
-        if (!adapter.isEnabled) return
-
-        // Only surface paired devices that actively advertise LinkPad's Host RFCOMM UUID via SDP.
-        // This prevents idle phones or controllers from showing up as phantom Hosts.
-        runCatching {
-            val bonded = adapter.bondedDevices.orEmpty()
-            for (device in bonded) {
-                val cachedUuids = runCatching { device.uuids }.getOrNull()
-                if (hasLinkPadHostUuid(cachedUuids)) {
-                    addVerifiedBluetoothHost(device)
-                } else {
-                    val addr = device.address ?: continue
-                    hostMap.remove("bt:$addr")
-                }
-                runCatching { device.fetchUuidsWithSdp() }
-            }
-            publishHosts()
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun addVerifiedBluetoothHost(device: BluetoothDevice) {
-        val addr = device.address ?: return
-        val id = "bt:$addr"
-        val name = runCatching { device.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: addr
-        hostMap[id] = DiscoveredHost(
-            id = id,
-            name = name,
-            hostAddress = addr,
-            port = 0,
-            bluetoothAddress = addr,
-            transport = TransportType.BLUETOOTH_RFCOMM,
-            lastSeenMs = System.currentTimeMillis()
-        )
-    }
-
-    private fun hasLinkPadHostUuid(uuids: Array<ParcelUuid>?): Boolean =
-        uuids?.any { it.uuid == LinkPadConstants.BT_SERVICE_UUID } == true
-
-    private fun registerBtUuidReceiver() {
-        if (uuidReceiver != null) return
-        val receiver = object : BroadcastReceiver() {
-            @SuppressLint("MissingPermission")
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                if (intent?.action != BluetoothDevice.ACTION_UUID) return
-                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                } ?: return
-
-                val parcelUuids = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID, ParcelUuid::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID)
-                        ?.mapNotNull { it as? ParcelUuid }
-                        ?.toTypedArray()
-                }
-
-                val addr = device.address ?: return
-                if (hasLinkPadHostUuid(parcelUuids)) {
-                    addVerifiedBluetoothHost(device)
-                } else {
-                    hostMap.remove("bt:$addr")
-                }
-                publishHosts()
-            }
-        }
-        runCatching {
-            ContextCompat.registerReceiver(
-                context.applicationContext,
-                receiver,
-                IntentFilter(BluetoothDevice.ACTION_UUID),
-                ContextCompat.RECEIVER_EXPORTED
-            )
-            uuidReceiver = receiver
-        }
-    }
-
-    private fun unregisterBtUuidReceiver() {
-        val receiver = uuidReceiver ?: return
-        runCatching { context.applicationContext.unregisterReceiver(receiver) }
-        uuidReceiver = null
     }
 
     fun stopDiscovery() {
@@ -190,7 +85,6 @@ class HostDiscoveryManager(private val context: Context) {
         nsdResolveQueue = null
         runCatching { beaconSocket?.close() }
         beaconSocket = null
-        unregisterBtUuidReceiver()
         stopNsdDiscovery()
         releaseMulticastLock()
     }

@@ -15,10 +15,12 @@ import com.example.MainActivity
 import com.example.R
 import com.example.protocol.KeymapProfile
 import com.example.transport.HostSessionManager
+import com.example.uhid.UhidBridgeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -30,6 +32,25 @@ object HostRuntimeHolder {
         return manager ?: synchronized(this) {
             manager ?: HostSessionManager(context.applicationContext).also { manager = it }
         }
+    }
+
+    fun hardwareBridgeState(context: Context): StateFlow<UhidBridgeState> =
+        getOrCreate(context).hardwareBridge.state
+
+    fun refreshHardwareBridge(context: Context) {
+        getOrCreate(context).hardwareBridge.refreshProbe()
+    }
+
+    fun activateHardwareGamepads(context: Context) {
+        getOrCreate(context).hardwareBridge.activateHardwareGamepads()
+    }
+
+    fun pairWirelessDebugging(context: Context, portText: String, pairingCode: String) {
+        getOrCreate(context).hardwareBridge.pairAndActivateWirelessDebugging(portText, pairingCode)
+    }
+
+    fun shutdownHardwareBridge() {
+        manager?.hardwareBridge?.shutdownAgent()
     }
 
     fun updateKeymap(slot: Int, profile: KeymapProfile) {

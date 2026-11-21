@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Edit
@@ -155,12 +154,6 @@ fun HomeScreen(
                                 activeColor = SignalEmerald,
                                 contentDesc = "Network"
                             )
-                            GlassStatusIcon(
-                                icon = Icons.Default.Bluetooth,
-                                active = environmentStatus.bluetoothEnabled,
-                                activeColor = CobaltBlue,
-                                contentDesc = "Bluetooth"
-                            )
                             var renameFocused by remember { mutableStateOf(false) }
                             LiquidGlassPanel(
                                 shape = RoundedCornerShape(14.dp),
@@ -205,7 +198,7 @@ fun HomeScreen(
                         ) {
                             RoleGlassTile(
                                 title = "Controller",
-                                tag = "WI-FI · BT HID",
+                                tag = "WI-FI UDP · 4P",
                                 icon = Icons.Default.SportsEsports,
                                 accent = CobaltBlue,
                                 modifier = Modifier
@@ -229,7 +222,7 @@ fun HomeScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             RoleGlassTile(
                                 title = "Controller",
-                                tag = "WI-FI · BT HID",
+                                tag = "WI-FI UDP · 4P",
                                 icon = Icons.Default.SportsEsports,
                                 accent = CobaltBlue,
                                 modifier = Modifier
@@ -575,7 +568,7 @@ fun HomeScreen(
                 color = TitaniumText
             )
             Text(
-                text = "Visible to LAN hosts and Bluetooth HID receivers.",
+                text = "Visible to PC, Android/Fire TV, and phone Wi-Fi UDP hosts.",
                 style = MaterialTheme.typography.bodySmall,
                 color = PewterMuted
             )

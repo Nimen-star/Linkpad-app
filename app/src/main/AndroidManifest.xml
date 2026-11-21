@@ -16,19 +16,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Bluetooth Classic RFCOMM & HID Gamepad (legacy + Android 12+) -->
+    <!-- Bluetooth Classic RFCOMM Host (legacy + Android 12+, optional for Host mode) -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_ADMIN"
-        android:maxSdkVersion="30" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation"
-        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
     <!-- Support phones, tablets, and Android TV from the same APK -->
     <uses-feature
@@ -69,6 +61,19 @@
             android:name=".bridge.ControllerHostService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".bridge.LinkPadInputMethodService"
+            android:exported="true"
+            android:label="@string/ime_service_name"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/linkpad_ime" />
+        </service>
     </application>
 
 </manifest>

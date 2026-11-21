@@ -83,7 +83,6 @@ import com.example.protocol.GyroMode
 import com.example.protocol.GyroResponseMode
 import com.example.protocol.HapticStrength
 import com.example.protocol.ProPaddleConfig
-import com.example.transport.BluetoothHidState
 import com.example.transport.ClientConnectionState
 import com.example.ui.components.ArcadeFightControllerPad
 import com.example.ui.components.DualStickControllerPad
@@ -116,7 +115,6 @@ private enum class OrientationChoice(val label: String, val orientationFlag: Int
 fun RetroControllerScreen(
     previewMode: Boolean = false,
     connectionState: ClientConnectionState,
-    hidState: BluetoothHidState,
     controllerLayout: ControllerLayout,
     controllerTheme: ControllerTheme = ControllerTheme.LIQUID_GLASS,
     hapticStrength: HapticStrength,
@@ -300,7 +298,6 @@ fun RetroControllerScreen(
     }
 
     val connected = connectionState as? ClientConnectionState.Connected
-    val isHidActive = hidState is BluetoothHidState.Connected || hidState is BluetoothHidState.Connecting
     val slot = connected?.assignedSlot ?: 1
 
     LiquidGlassBackdrop {
@@ -543,8 +540,8 @@ fun RetroControllerScreen(
                 }
             }
 
-            // Disconnected Overlay (suppressed during Offline Preview and native Bluetooth HID)
-            if (!previewMode && !isHidActive &&
+            // Disconnected Overlay (suppressed during Offline Preview)
+            if (!previewMode &&
                 (connectionState is ClientConnectionState.Error ||
                     connectionState is ClientConnectionState.Disconnected)
             ) {

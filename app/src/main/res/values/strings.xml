@@ -3,4 +3,5 @@
     <string name="host_notification_channel_name">LinkPad Host Session</string>
     <string name="host_notification_title">LinkPad Host Active</string>
     <string name="host_notification_text">Listening for controllers · Pairing code %1$s</string>
+    <string name="ime_service_name">LinkPad Virtual Controller Keyboard</string>
 </resources>
