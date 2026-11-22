@@ -4,4 +4,6 @@
     <string name="host_notification_title">LinkPad Host Active</string>
     <string name="host_notification_text">Listening for controllers · Pairing code %1$s</string>
     <string name="ime_service_name">LinkPad Virtual Controller Keyboard</string>
+    <string name="accessibility_service_name">LinkPad Touch &amp; TV Nav Bridge</string>
+    <string name="accessibility_service_description">Translates incoming Wi-Fi UDP LinkPad controller inputs into on-screen touches, analog drags, and TV D-Pad navigation when enabled by you. LinkPad does not read or transmit personal text or passwords.</string>
 </resources>

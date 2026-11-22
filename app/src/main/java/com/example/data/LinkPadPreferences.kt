@@ -18,6 +18,7 @@ import com.example.protocol.GyroMode
 import com.example.protocol.GyroResponseMode
 import com.example.protocol.HapticStrength
 import com.example.protocol.KeymapProfile
+import com.example.protocol.OsInputBridgeMode
 import com.example.protocol.PadButton
 import com.example.protocol.ProPaddleConfig
 import com.example.protocol.RecentHostEntry
@@ -44,6 +45,7 @@ data class UserSettings(
     val proPaddleConfig: ProPaddleConfig = ProPaddleConfig(),
     val customizationsByLayout: Map<ControllerLayout, ControlCustomization> = defaultCustomizations(),
     val allowFavoritesWithoutCode: Boolean = false,
+    val osInputBridgeMode: OsInputBridgeMode = OsInputBridgeMode.TV_DPAD_NAV,
     val slotKeymaps: Map<Int, KeymapProfile> = defaultSlotKeymaps(),
     val recentHosts: List<RecentHostEntry> = emptyList(),
     val favoriteHosts: List<FavoriteHostEntry> = emptyList(),
@@ -93,6 +95,7 @@ class LinkPadPreferences(private val context: Context) {
         val MIGRATED_PER_LAYOUT = booleanPreferencesKey("migrated_per_layout")
 
         val ALLOW_FAV_NO_CODE = booleanPreferencesKey("allow_fav_no_code")
+        val OS_INPUT_BRIDGE_MODE = stringPreferencesKey("os_input_bridge_mode")
         val SLOT_1_KEYMAP = stringPreferencesKey("slot_1_keymap")
         val SLOT_2_KEYMAP = stringPreferencesKey("slot_2_keymap")
         val SLOT_3_KEYMAP = stringPreferencesKey("slot_3_keymap")
@@ -156,6 +159,7 @@ class LinkPadPreferences(private val context: Context) {
             proPaddleConfig = parseProPaddleConfig(prefs[Keys.PRO_PADDLE_BINDINGS].orEmpty()),
             customizationsByLayout = customizationsByLayout,
             allowFavoritesWithoutCode = prefs[Keys.ALLOW_FAV_NO_CODE] ?: false,
+            osInputBridgeMode = parseOsInputBridgeMode(prefs[Keys.OS_INPUT_BRIDGE_MODE]),
             slotKeymaps = slotKeymaps,
             recentHosts = parseRecentHosts(prefs[Keys.RECENT_HOSTS].orEmpty()),
             favoriteHosts = parseFavoriteHosts(prefs[Keys.FAVORITE_HOSTS].orEmpty()),
@@ -262,6 +266,10 @@ class LinkPadPreferences(private val context: Context) {
         context.dataStore.edit { it[Keys.ALLOW_FAV_NO_CODE] = enabled }
     }
 
+    suspend fun setOsInputBridgeMode(mode: OsInputBridgeMode) {
+        context.dataStore.edit { it[Keys.OS_INPUT_BRIDGE_MODE] = mode.name }
+    }
+
     suspend fun setSlotKeymap(slot: Int, profile: KeymapProfile) {
         val key = when (slot) {
             1 -> Keys.SLOT_1_KEYMAP
@@ -327,6 +335,9 @@ class LinkPadPreferences(private val context: Context) {
 
     private fun parseKeymap(value: String?): KeymapProfile =
         KeymapProfile.entries.firstOrNull { it.name == value } ?: KeymapProfile.GAMEPAD_STANDARD
+
+    private fun parseOsInputBridgeMode(value: String?): OsInputBridgeMode =
+        OsInputBridgeMode.entries.firstOrNull { it.name == value } ?: OsInputBridgeMode.TV_DPAD_NAV
 
     private fun parseHapticStrength(value: String?): HapticStrength? =
         HapticStrength.entries.firstOrNull { it.name == value }

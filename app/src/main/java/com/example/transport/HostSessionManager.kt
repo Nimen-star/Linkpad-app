@@ -78,6 +78,7 @@ class HostSessionManager(private val context: Context) {
     @Volatile
     private var allowAnyFavoriteNoCode = false
     private val trustedClientIds = ConcurrentHashMap.newKeySet<Int>()
+    private val ephemeralTrustedIds = ConcurrentHashMap.newKeySet<Int>()
     @Volatile
     var onTrustClientId: ((Int) -> Unit)? = null
 
@@ -157,6 +158,10 @@ class HostSessionManager(private val context: Context) {
         }
         removed?.let { endpoint ->
             hardwareBridge.destroySlot(endpoint.slot)
+            if (endpoint.slot == 1) {
+                InputBridgeBus.updateP1State(0, slotKeymaps[1] ?: KeymapProfile.GAMEPAD_STANDARD)
+                InputBridgeBus.updateP1AnalogAxes(AnalogAxes())
+            }
             val bye = InputPacket(type = PacketType.BYE, slot = endpoint.slot)
             sendToEndpoint(endpoint, bye)
             runCatching { endpoint.btSocket?.close() }
@@ -173,10 +178,17 @@ class HostSessionManager(private val context: Context) {
         }
     }
 
+    fun trustClientImmediately(clientId: Int) {
+        if (clientId == 0) return
+        ephemeralTrustedIds.add(clientId)
+        trustedClientIds.add(clientId)
+    }
+
     fun setTrustedConfiguration(trustedIds: Set<Int>, allowAnyFavorite: Boolean) {
         allowAnyFavoriteNoCode = allowAnyFavorite
         trustedClientIds.clear()
         trustedClientIds.addAll(trustedIds)
+        trustedClientIds.addAll(ephemeralTrustedIds)
     }
 
     fun stopHosting() {
@@ -549,6 +561,10 @@ class HostSessionManager(private val context: Context) {
         }
         if (removedSlot != null) {
             hardwareBridge.destroySlot(removedSlot)
+            if (removedSlot == 1) {
+                InputBridgeBus.updateP1State(0, slotKeymaps[1] ?: KeymapProfile.GAMEPAD_STANDARD)
+                InputBridgeBus.updateP1AnalogAxes(AnalogAxes())
+            }
             publishSlots()
         }
     }
@@ -611,11 +627,16 @@ class HostSessionManager(private val context: Context) {
 
     private fun startWatchdog() {
         watchdogJob = scope.launch {
+            var pingTick = 0
             while (isActive && running) {
                 delay(1_000L)
+                pingTick++
                 val pps = packetCounter.getAndSet(0)
                 InputBridgeBus.setPacketsPerSecond(pps)
                 InputBridgeBus.setLocalIpAddress(LinkPadConstants.findPrimaryLocalIpv4(context))
+                if (pingTick % 2 == 0) {
+                    hardwareBridge.quickPingAttach()
+                }
 
                 val now = System.currentTimeMillis()
                 val evictedSlots = mutableListOf<Int>()
@@ -630,7 +651,13 @@ class HostSessionManager(private val context: Context) {
                     }
                 }
                 if (evictedSlots.isNotEmpty()) {
-                    evictedSlots.forEach { hardwareBridge.destroySlot(it) }
+                    evictedSlots.forEach { slot ->
+                        hardwareBridge.destroySlot(slot)
+                        if (slot == 1) {
+                            InputBridgeBus.updateP1State(0, slotKeymaps[1] ?: KeymapProfile.GAMEPAD_STANDARD)
+                            InputBridgeBus.updateP1AnalogAxes(AnalogAxes())
+                        }
+                    }
                     publishSlots()
                 }
             }

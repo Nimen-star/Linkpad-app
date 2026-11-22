@@ -68,6 +68,21 @@ enum class GyroResponseMode(val label: String) {
     RATE_AIM("Rate Aim")
 }
 
+enum class OsInputBridgeMode(val label: String, val summary: String) {
+    TV_DPAD_NAV(
+        "TV D-Pad & Apps",
+        "Drives Fire TV / Android TV D-Pad, Back, Home & Center Click with zero ADB"
+    ),
+    TOUCH_GAMEPAD(
+        "Touch Game Mapper",
+        "Maps Wi-Fi sticks, gyro & ABXY buttons to real multi-touch game screen spots"
+    ),
+    KEYBOARD_IME(
+        "Keyboard / Emulators",
+        "Sends held WASD / Arrow / Gamepad keys + Stick-to-Dpad via Virtual Keyboard"
+    )
+}
+
 data class ProPaddleConfig(
     val m1: PadButton = PadButton.A,
     val m2: PadButton = PadButton.B,

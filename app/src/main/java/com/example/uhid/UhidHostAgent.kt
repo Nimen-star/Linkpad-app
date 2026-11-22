@@ -435,6 +435,7 @@ object UhidHostAgent {
             ?.substringAfter("=")
             ?.toIntOrNull()
             ?: -1
+        val persistent = args.any { it == "--persistent" }
 
         val uhidBackend = KernelUhidBackend()
         val uinputCliBackend = AospUinputCliBackend()
@@ -446,6 +447,7 @@ object UhidHostAgent {
             binderBackend.init() -> binderBackend
             else -> {
                 println("LINKPAD_AGENT_ERROR:NO_BACKEND")
+                runCatching { File("/data/local/tmp/linkpad_agent.status").writeText("ERROR:NO_BACKEND") }
                 return
             }
         }
@@ -479,6 +481,7 @@ object UhidHostAgent {
 
         println("LINKPAD_AGENT_READY:${activeBackend.type.name}")
         System.out.flush()
+        runCatching { File("/data/local/tmp/linkpad_agent.status").writeText("READY:${activeBackend.type.name}") }
 
         val buf = ByteArray(64)
         val packet = DatagramPacket(buf, buf.size)
@@ -495,7 +498,7 @@ object UhidHostAgent {
                     idleTicks = 0
                 } catch (_: SocketTimeoutException) {
                     idleTicks++
-                    if (parentPid <= 0 && idleTicks > 30) break
+                    if (!persistent && parentPid <= 0 && idleTicks > 30) break
                     continue
                 }
 

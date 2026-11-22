@@ -13,6 +13,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.LinkPadPreferences
 import com.example.protocol.KeymapProfile
 import com.example.transport.HostSessionManager
 import com.example.uhid.UhidBridgeState
@@ -49,6 +50,12 @@ object HostRuntimeHolder {
         getOrCreate(context).hardwareBridge.pairAndActivateWirelessDebugging(portText, pairingCode)
     }
 
+    fun currentDiscoveredPairPort(): Int? =
+        manager?.hardwareBridge?.currentDiscoveredPairPort()
+
+    suspend fun activateRemoteHostOverWifi(context: Context, targetIp: String): Result<String> =
+        getOrCreate(context).hardwareBridge.activateRemoteHostOverWifi(targetIp)
+
     fun shutdownHardwareBridge() {
         manager?.hardwareBridge?.shutdownAgent()
     }
@@ -69,6 +76,11 @@ object HostRuntimeHolder {
 
     fun setTrustedConfiguration(trustedIds: Set<Int>, allowAnyFavorite: Boolean) {
         manager?.setTrustedConfiguration(trustedIds, allowAnyFavorite)
+    }
+
+    fun trustClientImmediately(context: Context, clientId: Int) {
+        if (clientId == 0) return
+        getOrCreate(context).trustClientImmediately(clientId)
     }
 
     fun setOnTrustClientCallback(callback: ((Int) -> Unit)?) {
@@ -94,8 +106,15 @@ class ControllerHostService : Service() {
             else -> {
                 val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME) ?: "LinkPad Host"
                 val enableBt = intent?.getBooleanExtra(EXTRA_ENABLE_BT, false) ?: false
+                val trustClientId = intent?.getIntExtra(EXTRA_TRUST_CLIENT_ID, 0) ?: 0
                 ensureNotificationChannel()
                 val manager = HostRuntimeHolder.getOrCreate(this)
+                if (trustClientId != 0) {
+                    manager.trustClientImmediately(trustClientId)
+                    scope.launch(Dispatchers.IO) {
+                        LinkPadPreferences(this@ControllerHostService).addTrustedClientId(trustClientId)
+                    }
+                }
                 val code = manager.startHosting(
                     deviceName = deviceName,
                     enableBluetooth = enableBt
@@ -181,6 +200,7 @@ class ControllerHostService : Service() {
         const val ACTION_STOP = "com.example.action.STOP_HOST"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_ENABLE_BT = "extra_enable_bt"
+        const val EXTRA_TRUST_CLIENT_ID = "extra_trust_client_id"
 
         fun start(context: Context, deviceName: String, enableBluetooth: Boolean) {
             val intent = Intent(context, ControllerHostService::class.java).apply {

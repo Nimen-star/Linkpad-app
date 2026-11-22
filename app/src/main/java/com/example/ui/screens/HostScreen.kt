@@ -1,12 +1,18 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,12 +42,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,6 +87,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.protocol.KeymapProfile
+import com.example.protocol.OsInputBridgeMode
 import com.example.protocol.PadButton
 import com.example.protocol.PlayerSlotState
 import com.example.transport.LinkPadConstants
@@ -102,6 +112,7 @@ import com.example.ui.theme.SignalEmerald
 import com.example.ui.theme.TitaniumText
 import com.example.ui.theme.WarmAmber
 import com.example.ui.theme.playerAccentColor
+import com.example.ui.viewmodel.EnvironmentStatus
 
 @Composable
 fun HostScreen(
@@ -109,6 +120,10 @@ fun HostScreen(
     pairingCode: String,
     localIp: String,
     slots: List<PlayerSlotState>,
+    environmentStatus: EnvironmentStatus,
+    accessibilityBridgeActive: Boolean,
+    imeBridgeActive: Boolean,
+    osInputBridgeMode: OsInputBridgeMode,
     hardwareBridgeState: UhidBridgeState,
     allowFavoritesWithoutCode: Boolean,
     trustedDeviceCount: Int,
@@ -120,13 +135,16 @@ fun HostScreen(
     onKickPlayer: (Int) -> Unit,
     onToggleAllowFavoritesWithoutCode: (Boolean) -> Unit,
     onClearTrustedDevices: () -> Unit,
+    onSelectOsInputBridgeMode: (OsInputBridgeMode) -> Unit,
     onRefreshSystemStatus: () -> Unit,
     onRefreshHardwareBridge: () -> Unit,
     onActivateHardwareGamepads: () -> Unit,
-    onPairWirelessDebugging: (String, String) -> Unit
+    onPairWirelessDebugging: (String, String) -> Unit,
+    onPostWirelessPairNotification: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showWirelessPairModal by remember { mutableStateOf(false) }
+    var showAccessibilityConsentDialog by remember { mutableStateOf(false) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         onRefreshSystemStatus()
@@ -353,12 +371,14 @@ fun HostScreen(
 
                     val rightColumn: @Composable () -> Unit = {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            // OS Hardware Gamepad Bridge Card (Wi-Fi UDP -> 4 Kernel UHID Pads, Zero Shizuku, Zero Root)
-                            HardwareGamepadsCard(
-                                bridgeState = hardwareBridgeState,
-                                onRefresh = onRefreshHardwareBridge,
-                                onActivate = onActivateHardwareGamepads,
-                                onOpenPairDialog = { showWirelessPairModal = true },
+                            // Primary Zero-ADB OS Input Bridge (Works on Fire TV, Android TV, Phones — No Root / No ADB)
+                            ZeroAdbOsInputCard(
+                                environmentStatus = environmentStatus,
+                                accessibilityActive = accessibilityBridgeActive,
+                                imeActive = imeBridgeActive,
+                                selectedMode = osInputBridgeMode,
+                                onSelectMode = onSelectOsInputBridgeMode,
+                                onEnableAccessibilityClick = { showAccessibilityConsentDialog = true },
                                 onOpenImeSettings = {
                                     runCatching {
                                         context.startActivity(
@@ -366,7 +386,28 @@ fun HostScreen(
                                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                         )
                                     }
+                                },
+                                onOpenImePicker = {
+                                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                    runCatching { imm?.showInputMethodPicker() }
+                                        .onFailure {
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
+                                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                )
+                                            }
+                                        }
                                 }
+                            )
+
+                            // Optional Advanced Kernel UHID Gamepad Engine
+                            HardwareGamepadsCard(
+                                bridgeState = hardwareBridgeState,
+                                onRefresh = onRefreshHardwareBridge,
+                                onActivate = onActivateHardwareGamepads,
+                                onOpenPairDialog = { showWirelessPairModal = true },
+                                onPostPairNotification = onPostWirelessPairNotification
                             )
 
                             // Trusted Favorites Setting Card
@@ -556,33 +597,93 @@ fun HostScreen(
             }
         }
     }
+    if (showAccessibilityConsentDialog) {
+        LiquidGlassDialog(
+            onDismissRequest = { showAccessibilityConsentDialog = false },
+            accentColor = SignalEmerald,
+            maxWidthDp = 440
+        ) {
+            Text(
+                text = "LinkPad OS Input Bridge",
+                style = MaterialTheme.typography.titleLarge,
+                color = TitaniumText
+            )
+            Text(
+                text = "To let your connected Wi-Fi UDP controller navigate Fire TV / Android TV apps (D-Pad, Back, Home) and map controls onto touch-only games without Root or ADB, LinkPad uses Android's Accessibility Service.",
+                style = MaterialTheme.typography.bodySmall,
+                color = TitaniumText
+            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = GlassFillSubtle,
+                border = BorderStroke(1.dp, SignalEmerald.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Privacy guarantee: LinkPad never reads passwords, personal text, notifications, or screen contents. It only dispatches your controller presses locally on this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PewterMuted,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showAccessibilityConsentDialog = false },
+                    border = BorderStroke(1.dp, GlassRimMid),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                ) {
+                    Text("Not Now", color = PewterMuted)
+                }
+                Button(
+                    onClick = {
+                        showAccessibilityConsentDialog = false
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SignalEmerald,
+                        contentColor = ObsidianBg
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .testTag("confirm_accessibility_settings_button")
+                ) {
+                    Text("Open Settings", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HardwareGamepadsCard(
-    bridgeState: UhidBridgeState,
-    onRefresh: () -> Unit,
-    onActivate: () -> Unit,
-    onOpenPairDialog: () -> Unit,
-    onOpenImeSettings: () -> Unit
+private fun ZeroAdbOsInputCard(
+    environmentStatus: EnvironmentStatus,
+    accessibilityActive: Boolean,
+    imeActive: Boolean,
+    selectedMode: OsInputBridgeMode,
+    onSelectMode: (OsInputBridgeMode) -> Unit,
+    onEnableAccessibilityClick: () -> Unit,
+    onOpenImeSettings: () -> Unit,
+    onOpenImePicker: () -> Unit
 ) {
-    val isActive = bridgeState is UhidBridgeState.Active
-    val isBusy = bridgeState is UhidBridgeState.Checking ||
-        bridgeState is UhidBridgeState.StartingAgent ||
-        bridgeState is UhidBridgeState.WaitingTrustPrompt
-    val isError = bridgeState is UhidBridgeState.Error
-
-    val borderAccent = when {
-        isActive -> SignalEmerald
-        isError -> PrecisionCrimson
-        isBusy -> CobaltBlue
-        else -> WarmAmber.copy(alpha = 0.65f)
-    }
+    val bridgeReady = accessibilityActive || environmentStatus.imeSelected || imeActive
+    val accent = if (bridgeReady) SignalEmerald else CobaltBlue
 
     LiquidGlassPanel(
         shape = RoundedCornerShape(22.dp),
-        elevated = isActive,
-        accentBorderTint = borderAccent,
+        elevated = bridgeReady,
+        accentBorderTint = accent.copy(alpha = 0.72f),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -600,32 +701,288 @@ private fun HardwareGamepadsCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Gamepad,
-                        contentDescription = "Hardware Gamepad Engine",
-                        tint = borderAccent,
+                        imageVector = Icons.Default.AccessibilityNew,
+                        contentDescription = "Zero-ADB OS Input",
+                        tint = accent,
                         modifier = Modifier.size(20.dp)
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "OS Hardware Gamepads",
+                            text = "OS Input · No ADB / No Root",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TitaniumText
+                        )
+                        Text(
+                            text = "WI-FI UDP → TV, TOUCH GAMES & EMULATORS",
+                            fontFamily = JetBrainsMonoFamily,
+                            fontSize = 10.sp,
+                            color = accent
+                        )
+                    }
+                }
+            }
+
+            // Live bridge status pills
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (accessibilityActive) SignalEmerald.copy(alpha = 0.16f) else GlassFillSubtle,
+                    border = BorderStroke(
+                        1.dp,
+                        if (accessibilityActive) SignalEmerald.copy(alpha = 0.7f) else HairlineBorder
+                    )
+                ) {
+                    Text(
+                        text = if (accessibilityActive) "ACCESSIBILITY · ACTIVE" else "ACCESSIBILITY · OFF",
+                        fontFamily = JetBrainsMonoFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (accessibilityActive) SignalEmerald else WarmAmber,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                val imeLabel = when {
+                    environmentStatus.imeSelected || imeActive -> "KEYBOARD IME · SELECTED"
+                    environmentStatus.imeEnabled -> "KEYBOARD IME · ENABLED"
+                    else -> "KEYBOARD IME · OFF"
+                }
+                val imeColor = when {
+                    environmentStatus.imeSelected || imeActive -> SignalEmerald
+                    environmentStatus.imeEnabled -> CobaltBlue
+                    else -> PewterMuted
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (environmentStatus.imeSelected || imeActive) {
+                        SignalEmerald.copy(alpha = 0.16f)
+                    } else {
+                        GlassFillSubtle
+                    },
+                    border = BorderStroke(1.dp, imeColor.copy(alpha = 0.55f))
+                ) {
+                    Text(
+                        text = imeLabel,
+                        fontFamily = JetBrainsMonoFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = imeColor,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            // Input mode switcher
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "OS INPUT MODE",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = PewterMuted
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OsInputBridgeMode.entries.forEach { mode ->
+                        val isSelected = mode == selectedMode
+                        val icon = when (mode) {
+                            OsInputBridgeMode.TV_DPAD_NAV -> Icons.Default.Tv
+                            OsInputBridgeMode.TOUCH_GAMEPAD -> Icons.Default.TouchApp
+                            OsInputBridgeMode.KEYBOARD_IME -> Icons.Default.Keyboard
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) CobaltBlue.copy(alpha = 0.22f) else GlassFillSubtle,
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) CobaltBlue else GlassRimMid
+                            ),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onSelectMode(mode) }
+                                .testTag("os_mode_${mode.name.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = mode.label,
+                                    tint = if (isSelected) CobaltBlue else PewterMuted,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = mode.label,
+                                    fontFamily = JetBrainsMonoFamily,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) TitaniumText else PewterMuted
+                                )
+                            }
+                        }
+                    }
+                }
+                Text(
+                    text = selectedMode.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PewterMuted
+                )
+            }
+
+            // Action Buttons for Accessibility & Keyboard IME
+            Button(
+                onClick = onEnableAccessibilityClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (accessibilityActive) GlassFillSubtle else SignalEmerald,
+                    contentColor = if (accessibilityActive) SignalEmerald else ObsidianBg
+                ),
+                border = if (accessibilityActive) BorderStroke(1.dp, SignalEmerald.copy(alpha = 0.6f)) else null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .minimumInteractiveComponentSize()
+                    .testTag("enable_accessibility_bridge_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccessibilityNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (accessibilityActive) "Accessibility Bridge Active · Settings" else "Enable Accessibility Bridge",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onOpenImeSettings,
+                    border = BorderStroke(1.dp, GlassRimMid),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .testTag("open_ime_settings_button")
+                ) {
+                    Text(
+                        text = "1. Enable Keyboard",
+                        color = BrushedSilver,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                OutlinedButton(
+                    onClick = onOpenImePicker,
+                    border = BorderStroke(
+                        1.dp,
+                        if (environmentStatus.imeSelected) SignalEmerald.copy(alpha = 0.55f) else CobaltBlue.copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .testTag("select_ime_picker_button")
+                ) {
+                    Text(
+                        text = "2. Use Keyboard",
+                        color = if (environmentStatus.imeSelected) SignalEmerald else CobaltBlue,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HardwareGamepadsCard(
+    bridgeState: UhidBridgeState,
+    onRefresh: () -> Unit,
+    onActivate: () -> Unit,
+    onOpenPairDialog: () -> Unit,
+    onPostPairNotification: () -> Unit
+) {
+    val context = LocalContext.current
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            onPostPairNotification()
+            Toast.makeText(context, "Open Developer Options → Wireless debugging, then reply in notification shade", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val isActive = bridgeState is UhidBridgeState.Active
+    val isBusy = bridgeState is UhidBridgeState.Checking ||
+        bridgeState is UhidBridgeState.StartingAgent ||
+        bridgeState is UhidBridgeState.WaitingTrustPrompt
+    val isError = bridgeState is UhidBridgeState.Error
+
+    val borderAccent = when {
+        isActive -> SignalEmerald
+        isError -> PrecisionCrimson
+        isBusy -> CobaltBlue
+        else -> GlassRimMid
+    }
+
+    LiquidGlassPanel(
+        shape = RoundedCornerShape(22.dp),
+        elevated = isActive,
+        subtle = !isActive,
+        accentBorderTint = if (isActive || isError || isBusy) borderAccent else null,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Gamepad,
+                        contentDescription = "Optional Kernel Hardware Gamepad ID",
+                        tint = if (isActive) SignalEmerald else BrushedSilver,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Kernel Gamepad ID · Optional",
                             style = MaterialTheme.typography.titleMedium,
                             color = TitaniumText
                         )
                         Text(
                             text = when (bridgeState) {
-                                is UhidBridgeState.Idle -> "WI-FI UDP → 4 KERNEL PADS"
-                                is UhidBridgeState.Checking -> "PROBING DEVICE BRIDGE..."
+                                is UhidBridgeState.Idle -> "OPTIONAL /DEV/UHID FOR NATIVE CONTROLLER APPS"
+                                is UhidBridgeState.Checking -> "PROBING KERNEL BRIDGE..."
                                 is UhidBridgeState.SetupRequired ->
-                                    if (bridgeState.tcp5555Open) "LOCAL ADB READY · TAP ENABLE"
-                                    else "ENABLE ADB DEBUGGING FOR HARDWARE PADS"
+                                    if (bridgeState.tcp5555Open) "ADB PORT 5555 OPEN · TAP ENABLE"
+                                    else "BLOCKED BY ANDROID WITHOUT ADB/ROOT"
                                 is UhidBridgeState.WaitingTrustPrompt -> "TAP 'ALLOW' ON SYSTEM PROMPT"
-                                is UhidBridgeState.StartingAgent -> "LAUNCHING UHID HARDWARE ENGINE..."
+                                is UhidBridgeState.StartingAgent -> "LAUNCHING UHID ENGINE..."
                                 is UhidBridgeState.Active -> "ACTIVE · ${bridgeState.backend.label.uppercase()}"
-                                is UhidBridgeState.Error -> "NEEDS ATTENTION"
+                                is UhidBridgeState.Error -> "ADB NOT REACHABLE ON THIS DEVICE"
                             },
                             fontFamily = JetBrainsMonoFamily,
                             fontSize = 10.sp,
-                            color = borderAccent
+                            color = if (isActive) SignalEmerald else if (isError) PrecisionCrimson else PewterMuted
                         )
                     }
                 }
@@ -646,7 +1003,7 @@ private fun HardwareGamepadsCard(
             when (bridgeState) {
                 is UhidBridgeState.Active -> {
                     Text(
-                        text = "Every connected Wi-Fi phone automatically creates a physical OS Gamepad (/dev/uhid) on this TV or phone. No Bluetooth, root, or extra apps required.",
+                        text = "Physical /dev/uhid gamepads active for all 4 Wi-Fi UDP slots.",
                         style = MaterialTheme.typography.bodySmall,
                         color = PewterMuted
                     )
@@ -691,9 +1048,9 @@ private fun HardwareGamepadsCard(
                         )
                         Text(
                             text = if (bridgeState is UhidBridgeState.WaitingTrustPrompt) {
-                                "Check 'Always allow from this computer' and tap Allow."
+                                "Check 'Always allow' and tap Allow."
                             } else {
-                                "Connecting built-in hardware bridge..."
+                                "Starting UHID hardware service..."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = TitaniumText
@@ -705,21 +1062,8 @@ private fun HardwareGamepadsCard(
                     Text(
                         text = bridgeState.guidance,
                         style = MaterialTheme.typography.bodySmall,
-                        color = TitaniumText
+                        color = PewterMuted
                     )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = GlassFillSubtle,
-                        border = BorderStroke(1.dp, GlassRimMid),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "Fire TV / Redmi TV: Settings → My Fire TV / Device Preferences → Developer Options → Turn ON ADB Debugging (one time).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = PewterMuted,
-                            modifier = Modifier.padding(10.dp)
-                        )
-                    }
                 }
 
                 is UhidBridgeState.Error -> {
@@ -728,11 +1072,16 @@ private fun HardwareGamepadsCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = PrecisionCrimson
                     )
+                    Text(
+                        text = "Tip: Fire TV firmware blocks self-loopback ADB. Use OS Input above without ADB, or tap 'Activate TV UHID' from your Controller phone after connecting on Wi-Fi.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PewterMuted
+                    )
                 }
 
                 is UhidBridgeState.Idle -> {
                     Text(
-                        text = "Registers up to 4 real Wi-Fi UDP gamepads for any Android game, emulator, or TV app.",
+                        text = "Only needed if a game ignores Accessibility D-Pad, Touch Mapper, and Keyboard IME and strictly demands a kernel hardware gamepad.",
                         style = MaterialTheme.typography.bodySmall,
                         color = PewterMuted
                     )
@@ -740,70 +1089,78 @@ private fun HardwareGamepadsCard(
             }
 
             if (!isActive && !isBusy) {
-                Button(
-                    onClick = onActivate,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (bridgeState is UhidBridgeState.SetupRequired && bridgeState.tcp5555Open) SignalEmerald else BrushedSilver,
-                        contentColor = ObsidianBg
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .minimumInteractiveComponentSize()
-                        .testTag("enable_hardware_gamepads_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = if (isError) "Retry Enable Hardware Gamepads" else "Enable Hardware Gamepads",
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    OutlinedButton(
+                        onClick = onActivate,
+                        border = BorderStroke(1.dp, GlassRimMid),
+                        modifier = Modifier
+                            .weight(1f)
+                            .minimumInteractiveComponentSize()
+                            .testTag("enable_hardware_gamepads_button")
+                    ) {
+                        Text(
+                            text = if (isError) "Retry Kernel ID" else "Try Kernel ID",
+                            color = BrushedSilver,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        OutlinedButton(
+                            onClick = onOpenPairDialog,
+                            border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.5f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .minimumInteractiveComponentSize()
+                                .testTag("pair_wireless_debugging_button")
+                        ) {
+                            Text(
+                                text = "Pair Wi-Fi Debug",
+                                color = CobaltBlue,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     OutlinedButton(
-                        onClick = onOpenPairDialog,
-                        border = BorderStroke(1.dp, CobaltBlue.copy(alpha = 0.55f)),
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                onPostPairNotification()
+                                Toast.makeText(
+                                    context,
+                                    "Shade notification active — open Wireless debugging and enter code in notification",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        },
+                        border = BorderStroke(1.dp, WarmAmber.copy(alpha = 0.55f)),
                         modifier = Modifier
                             .fillMaxWidth()
                             .minimumInteractiveComponentSize()
-                            .testTag("pair_wireless_debugging_button")
+                            .testTag("shade_pair_notification_button")
                     ) {
                         Text(
-                            text = "Pair Wireless Debugging (Android 11+)",
-                            color = CobaltBlue,
-                            fontSize = 12.sp
+                            text = "Quick-Pair from Notification Shade (Stay in Settings)",
+                            color = WarmAmber,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(HairlineSubtle)
-            )
-
-            OutlinedButton(
-                onClick = onOpenImeSettings,
-                border = BorderStroke(1.dp, GlassRimMid),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .minimumInteractiveComponentSize()
-                    .testTag("open_ime_settings_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Keyboard,
-                    contentDescription = null,
-                    tint = BrushedSilver,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Zero-ADB Fallback · LinkPad Virtual Keyboard",
-                    color = BrushedSilver,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
         }
     }

@@ -75,12 +75,19 @@ import com.example.protocol.DiscoveredHost
 import com.example.protocol.FavoriteHostEntry
 import com.example.transport.ClientConnectionState
 import com.example.transport.LinkPadConstants
+import com.example.uhid.ProvisionUiState
+import com.example.uhid.UsbAdbDeviceInfo
+import com.example.uhid.WirelessAdbTarget
 import com.example.ui.components.LiquidGlassBackdrop
 import com.example.ui.components.LiquidGlassCheckRow
 import com.example.ui.components.LiquidGlassDialog
 import com.example.ui.components.LiquidGlassPanel
 import com.example.ui.components.LiquidGlassTextField
+import com.example.ui.components.ProvisionProgressDialog
+import com.example.ui.components.RemoteWirelessPairModal
 import com.example.ui.components.TapToRevealIpChip
+import com.example.ui.components.UsbOtgTargetCard
+import com.example.ui.components.WirelessAdbTargetsCard
 import com.example.ui.theme.BrushedSilver
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.GlassFillSubtle
@@ -101,10 +108,24 @@ fun ClientDiscoveryScreen(
     connectionState: ClientConnectionState,
     prefillIp: String = "",
     prefillPort: String = LinkPadConstants.HOST_UDP_PORT.toString(),
+    usbAdbTargets: List<UsbAdbDeviceInfo> = emptyList(),
+    wirelessAdbTargets: List<WirelessAdbTarget> = emptyList(),
+    wirelessScanning: Boolean = false,
+    provisionState: ProvisionUiState = ProvisionUiState(),
+    remoteAdbBusy: Boolean = false,
+    remoteAdbFeedback: String? = null,
     onStartDiscovery: () -> Unit,
     onStopDiscovery: () -> Unit,
     onOpenControllerCustomizer: () -> Unit = {},
     onClearError: () -> Unit,
+    onRefreshUsbTargets: () -> Unit = {},
+    onRescanWirelessTargets: () -> Unit = {},
+    onSetupUsbDevice: (UsbAdbDeviceInfo) -> Unit = {},
+    onStartWifiTargetSetup: (String, String?, Int) -> Unit = { _, _, _ -> },
+    onStartWirelessPairAndSetup: (String, Int, String, Int?, String?) -> Unit = { _, _, _, _, _ -> },
+    onDismissProvisioning: () -> Unit = {},
+    onActivateRemoteTvOverWifi: (String) -> Unit = {},
+    onClearRemoteAdbFeedback: () -> Unit = {},
     onConnectHost: (DiscoveredHost, String, Boolean) -> Unit,
     onConnectFavorite: (FavoriteHostEntry) -> Unit,
     onToggleFavorite: (DiscoveredHost) -> Unit,
@@ -119,9 +140,12 @@ fun ClientDiscoveryScreen(
     var manualPort by rememberSaveable { mutableStateOf(prefillPort) }
     var manualFavName by rememberSaveable { mutableStateOf("") }
     var pendingHostForPin by remember { mutableStateOf<DiscoveredHost?>(null) }
+    var showWirelessPairModal by remember { mutableStateOf(false) }
+    var prefillWirelessPairTarget by remember { mutableStateOf<WirelessAdbTarget?>(null) }
 
     DisposableEffect(Unit) {
         onStartDiscovery()
+        onRefreshUsbTargets()
         onDispose {
             onStopDiscovery()
         }
@@ -199,17 +223,43 @@ fun ClientDiscoveryScreen(
                         }
 
                         IconButton(
-                            onClick = onStartDiscovery,
+                            onClick = {
+                                onStartDiscovery()
+                                onRefreshUsbTargets()
+                                onRescanWirelessTargets()
+                            },
                             modifier = Modifier.testTag("rescan_hosts_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Rescan Wi-Fi hosts",
+                                contentDescription = "Rescan Wi-Fi and USB targets",
                                 tint = BrushedSilver
                             )
                         }
                     }
                 }
+
+                // USB OTG Connected Phone / TV 1-Tap Setup Card
+                UsbOtgTargetCard(
+                    devices = usbAdbTargets,
+                    onSetupDevice = onSetupUsbDevice
+                )
+
+                // Zero-IP Wireless TV & Phone 1-Click Setup & Play Card
+                WirelessAdbTargetsCard(
+                    targets = wirelessAdbTargets,
+                    discoveredUdpHosts = discoveredHosts,
+                    scanning = wirelessScanning,
+                    busy = provisionState.active,
+                    onRescan = onRescanWirelessTargets,
+                    onOneClickSetupAndPlay = { target, friendlyName ->
+                        onStartWifiTargetSetup(target.ip, friendlyName, target.connectPort)
+                    },
+                    onOpenWirelessPinPair = { target ->
+                        prefillWirelessPairTarget = target
+                        showWirelessPairModal = true
+                    }
+                )
 
                 // Segmented Glass Pairing Code Input (for LinkPad Wi-Fi UDP Host on PC, TV, or Phone)
                 LiquidGlassPanel(
@@ -407,6 +457,40 @@ fun ClientDiscoveryScreen(
                     }
                 }
 
+                if (remoteAdbFeedback != null) {
+                    LiquidGlassPanel(
+                        shape = RoundedCornerShape(16.dp),
+                        accentBorderTint = SignalEmerald,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = remoteAdbFeedback,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TitaniumText,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = onClearRemoteAdbFeedback,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss message",
+                                    tint = PewterMuted,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Permanent Favorites Section
                 if (favoriteHosts.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -600,6 +684,28 @@ fun ClientDiscoveryScreen(
                                         Text("Connect", style = MaterialTheme.typography.labelLarge)
                                     }
                                 }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        onStartWifiTargetSetup(
+                                            manualIp,
+                                            manualFavName.takeIf { it.isNotBlank() },
+                                            5555
+                                        )
+                                    },
+                                    enabled = !provisionState.active && manualIp.isNotBlank(),
+                                    border = BorderStroke(1.dp, SignalEmerald.copy(alpha = 0.65f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("remote_activate_tv_button")
+                                ) {
+                                    Text(
+                                        text = "1-Click Setup & Play (APK + Wi-Fi ADB + UHID)",
+                                        color = SignalEmerald,
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -670,6 +776,24 @@ fun ClientDiscoveryScreen(
                 label = "Save to Favorites (no code next time)",
                 onCheckedChange = { saveFav = it }
             )
+            OutlinedButton(
+                onClick = {
+                    pendingHostForPin = null
+                    onStartWifiTargetSetup(targetHost.hostAddress, targetHost.name, 5555)
+                },
+                enabled = !provisionState.active && !remoteAdbBusy,
+                border = BorderStroke(1.dp, SignalEmerald.copy(alpha = 0.55f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .minimumInteractiveComponentSize()
+                    .testTag("dialog_remote_activate_tv_button")
+            ) {
+                Text(
+                    text = "1-Click Setup & Play (${targetHost.hostAddress}:5555)",
+                    color = SignalEmerald,
+                    fontSize = 11.sp
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -705,6 +829,25 @@ fun ClientDiscoveryScreen(
             }
         }
     }
+
+    if (showWirelessPairModal) {
+        RemoteWirelessPairModal(
+            prefillTarget = prefillWirelessPairTarget,
+            onDismiss = { showWirelessPairModal = false },
+            onPairAndPlay = { ip, pairPort, pin, connectPort, name ->
+                onStartWirelessPairAndSetup(ip, pairPort, pin, connectPort, name)
+            }
+        )
+    }
+
+    ProvisionProgressDialog(
+        state = provisionState,
+        onUseTargetIp = { ip ->
+            manualIp = ip
+            showManualIp = true
+        },
+        onDismiss = onDismissProvisioning
+    )
 }
 
 @Composable

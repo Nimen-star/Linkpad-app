@@ -8,6 +8,8 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.math.BigInteger
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -18,7 +20,9 @@ import java.security.Signature
 import java.security.cert.Certificate
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.security.interfaces.RSAPublicKey
 import java.security.spec.PKCS8EncodedKeySpec
+import javax.crypto.Cipher
 
 /**
  * Generates & persists a persistent RSA-2048 ADB keypair and self-signed X.509 certificate
@@ -174,6 +178,61 @@ object AdbIdentityStore {
         }
         return derTag(0x06, out.toByteArray())
     }
+
+    private val ADB_SHA1_DIGEST_INFO_PREFIX = byteArrayOf(
+        0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e,
+        0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14
+    )
+
+    /**
+     * Signs ADB's 20-byte AUTH challenge token using RSA/ECB/PKCS1Padding with SHA-1 DigestInfo prefix
+     * (matching AOSP adbd's RSA_verify(NID_sha1, token, 20, ...) without double-hashing).
+     */
+    fun signAdbToken(privateKey: PrivateKey, token: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, privateKey)
+        return cipher.doFinal(ADB_SHA1_DIGEST_INFO_PREFIX + token)
+    }
+
+    /**
+     * Encodes an RSA-2048 public key into AOSP libcrypto_utils RSAPublicKey binary struct + Base64 + label\0.
+     * Uses Java standard library Base64 (android.util.Base64 not required) so JVM unit tests verify exact bytes.
+     */
+    fun encodeAdbPublicKey(publicKey: RSAPublicKey, label: String = "linkpad@android"): ByteArray {
+        val modBits = publicKey.modulus.bitLength()
+        val keySizeWords = (modBits + 31) / 32 // 64 for 2048-bit RSA
+        val keyBytes = keySizeWords * 4
+
+        val n = publicKey.modulus
+        val r32 = BigInteger.ONE.shiftLeft(32)
+        val n0inv = r32.subtract(n.mod(r32).modInverse(r32)).toLong() and 0xFFFFFFFFL
+        val r = BigInteger.ONE.shiftLeft(keySizeWords * 32)
+        val rr = r.multiply(r).mod(n)
+
+        val buf = ByteBuffer.allocate(4 + 4 + keyBytes + keyBytes + 4).order(ByteOrder.LITTLE_ENDIAN)
+        buf.putInt(keySizeWords)
+        buf.putInt(n0inv.toInt())
+
+        val nWords = toLittleEndianWords(n, keySizeWords)
+        val rrWords = toLittleEndianWords(rr, keySizeWords)
+        nWords.forEach { buf.putInt(it) }
+        rrWords.forEach { buf.putInt(it) }
+        buf.putInt(publicKey.publicExponent.toInt())
+
+        val b64 = java.util.Base64.getEncoder().encodeToString(buf.array())
+        return "$b64 $label\u0000".toByteArray(Charsets.UTF_8)
+    }
+
+    private fun toLittleEndianWords(value: BigInteger, wordCount: Int): IntArray {
+        val words = IntArray(wordCount)
+        var cur = value
+        val mask = BigInteger.valueOf(0xFFFFFFFFL)
+        for (i in 0 until wordCount) {
+            words[i] = cur.and(mask).toLong().toInt()
+            cur = cur.shiftRight(32)
+        }
+        return words
+    }
 }
 
 class LinkPadAdbConnectionManager(
@@ -189,13 +248,19 @@ class LinkPadAdbConnectionManager(
                 Security.insertProviderAt(Conscrypt.newProvider(), 1)
             }
         }
-        setApi(Build.VERSION.SDK_INT)
+        setApi(maxOf(Build.VERSION.SDK_INT, Build.VERSION_CODES.R))
         identity = AdbIdentityStore.loadOrCreate(context.applicationContext)
     }
 
     override fun getPrivateKey(): PrivateKey = identity.privateKey
 
     override fun getCertificate(): Certificate = identity.certificate
+
+    fun publicKeyPayload(): ByteArray =
+        AdbIdentityStore.encodeAdbPublicKey(identity.certificate.publicKey as RSAPublicKey, "linkpad@android")
+
+    fun signToken(token: ByteArray): ByteArray =
+        AdbIdentityStore.signAdbToken(identity.privateKey, token)
 
     override fun getDeviceName(): String = label
 }

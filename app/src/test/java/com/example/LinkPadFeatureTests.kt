@@ -1,17 +1,26 @@
 package com.example
 
+import com.example.bridge.InputBridgeBus
+import com.example.bridge.TouchMapperLayout
 import com.example.data.UserSettings
 import com.example.protocol.ControlOffset
 import com.example.protocol.ControllerLayout
 import com.example.protocol.GyroMode
+import com.example.protocol.KeymapProfile
+import com.example.protocol.OsInputBridgeMode
 import com.example.protocol.PadButton
 import com.example.uhid.AdbIdentityStore
+import com.example.uhid.AdbWireCodec
+import com.example.uhid.ProvisionParsers
 import com.example.uhid.UhidProtocol
+import com.example.uhid.WirelessPairParser
+import com.example.uhid.WirelessTargetHelpers
 import com.example.ui.components.GyroMotionMath
 import com.example.ui.components.formatTapToRevealIpText
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -20,6 +29,8 @@ import java.nio.ByteOrder
 import java.security.KeyPairGenerator
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.security.interfaces.RSAPublicKey
+import javax.crypto.Cipher
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -256,5 +267,125 @@ class LinkPadFeatureTests {
         assertEquals(24f, updated.customizationFor(ControllerLayout.RETRO_HANDHELD).dpadOffset.x, 0.001f)
         assertEquals(1.0f, updated.customizationFor(ControllerLayout.DUAL_STICK).scale, 0.001f)
         assertEquals(0f, updated.customizationFor(ControllerLayout.DUAL_STICK).dpadOffset.x, 0.001f)
+    }
+
+    @Test
+    fun touchMapperLayout_mapsFaceButtonsAndSticksWithDeadzone() {
+        val aSpot = TouchMapperLayout.buttonSpot(PadButton.A)
+        assertNotNull(aSpot)
+        assertTrue(aSpot!!.xFrac in 0f..1f && aSpot.yFrac in 0f..1f)
+
+        val dpadSpot = TouchMapperLayout.buttonSpot(PadButton.UP)
+        assertNull("DPAD directional buttons are driven via leftStick/navigation", dpadSpot)
+
+        assertNull(TouchMapperLayout.leftStickPoint(5, -5, 1920, 1080))
+        val rightPull = TouchMapperLayout.leftStickPoint(127, 0, 1920, 1080)
+        assertNotNull(rightPull)
+        assertTrue("Pulled right X should exceed anchor center", rightPull!!.first > 1920 * 0.18f)
+
+        val aimUp = TouchMapperLayout.rightStickPoint(0, -127, 1920, 1080)
+        assertNotNull(aimUp)
+        assertTrue("Aimed up Y should be above right-stick center", aimUp!!.second < 1080 * 0.48f)
+    }
+
+    @Test
+    fun inputBridgeBus_tracksP1MaskWithoutClobberingFromSlot2AndDefaultsToTvMode() {
+        assertEquals(OsInputBridgeMode.TV_DPAD_NAV, UserSettings().osInputBridgeMode)
+
+        InputBridgeBus.setHostActive(true, "123456")
+        InputBridgeBus.emitMaskChange(
+            slot = 1,
+            previousMask = 0,
+            newMask = PadButton.A.bit or PadButton.R.bit,
+            keymapProfile = KeymapProfile.KEYBOARD_P1_WASD
+        )
+        assertEquals(PadButton.A.bit or PadButton.R.bit, InputBridgeBus.p1ButtonMask.value)
+        assertEquals(KeymapProfile.KEYBOARD_P1_WASD, InputBridgeBus.p1KeymapProfile.value)
+
+        // Slot 2 input transitions must not clobber P1's tracked mask
+        InputBridgeBus.emitMaskChange(
+            slot = 2,
+            previousMask = 0,
+            newMask = PadButton.X.bit,
+            keymapProfile = KeymapProfile.GAMEPAD_STANDARD
+        )
+        assertEquals(PadButton.A.bit or PadButton.R.bit, InputBridgeBus.p1ButtonMask.value)
+
+        InputBridgeBus.setHostActive(false)
+        assertEquals(0, InputBridgeBus.p1ButtonMask.value)
+    }
+
+    @Test
+    fun adbWireCodec_encodesAndDecodesHeaderAndSyncCommandsCorrectly() {
+        val payload = "shell:pm path com.aistudio.linkpad.qrxmvt\u0000".toByteArray()
+        val hdr = AdbWireCodec.encodeHeader(AdbWireCodec.A_OPEN, 7, 0, payload)
+        assertEquals(24, hdr.size)
+        val parsed = AdbWireCodec.decodeHeader(hdr)
+        assertNotNull(parsed)
+        assertEquals(AdbWireCodec.A_OPEN, parsed!!.command)
+        assertEquals(7, parsed.arg0)
+        assertEquals(0, parsed.arg1)
+        assertEquals(payload.size, parsed.dataLength)
+        assertEquals(AdbWireCodec.checksum(payload), parsed.dataCheck)
+        assertTrue(parsed.isValidMagic)
+
+        val syncHdr = AdbWireCodec.encodeSyncCommand("DATA", 1024)
+        assertEquals("DATA", String(syncHdr, 0, 4, Charsets.US_ASCII))
+        assertEquals(1024, ByteBuffer.wrap(syncHdr).order(ByteOrder.LITTLE_ENDIAN).getInt(4))
+    }
+
+    @Test
+    fun adbIdentityStore_encodesRsaPubKeyAndSignsChallengeToken() {
+        val kpg = KeyPairGenerator.getInstance("RSA")
+        kpg.initialize(2048)
+        val kp = kpg.generateKeyPair()
+        val pub = kp.public as RSAPublicKey
+
+        val adbPub = AdbIdentityStore.encodeAdbPublicKey(pub, "linkpad@android")
+        assertTrue(adbPub.last() == 0.toByte())
+        val str = String(adbPub, 0, adbPub.size - 1, Charsets.UTF_8)
+        val parts = str.split(" ")
+        assertEquals(2, parts.size)
+        assertEquals("linkpad@android", parts[1])
+        val rawStruct = java.util.Base64.getDecoder().decode(parts[0])
+        assertEquals(524, rawStruct.size)
+        val structBuf = ByteBuffer.wrap(rawStruct).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(64, structBuf.getInt(0))
+
+        val token = ByteArray(20) { (it + 1).toByte() }
+        val sig = AdbIdentityStore.signAdbToken(kp.private, token)
+        assertEquals(256, sig.size)
+
+        // Verify signature decrypts with public key back to DigestInfo + token
+        val verifier = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        verifier.init(Cipher.DECRYPT_MODE, pub)
+        val decrypted = verifier.doFinal(sig)
+        assertEquals(35, decrypted.size)
+        assertArrayEquals(token, decrypted.copyOfRange(15, 35))
+    }
+
+    @Test
+    fun provisionAndWirelessPairParsers_extractExpectedValues() {
+        val dumpsys = "  versionCode=2 minSdk=24 targetSdk=36\n  versionName=1.3.0"
+        assertEquals(2, ProvisionParsers.parseInstalledVersionCode(dumpsys))
+        assertNull(ProvisionParsers.parseInstalledVersionCode("package not found"))
+
+        val ipOut = "3: wlan0: <BROADCAST,MULTICAST,UP>\n    inet 192.168.1.77/24 brd 192.168.1.255 scope global wlan0"
+        assertEquals("192.168.1.77", ProvisionParsers.parseWlanIpv4(ipOut))
+
+        assertEquals("41235" to "654321", WirelessPairParser.parseReply("41235 654321", null))
+        assertEquals("41235" to "654321", WirelessPairParser.parseReply("41235:654321", null))
+        assertEquals("39991" to "123456", WirelessPairParser.parseReply("123456", 39991))
+        assertNull(WirelessPairParser.parseReply("123456", null))
+
+        assertEquals("AFTMM", ProvisionParsers.parseTargetModel("MODEL=AFTMM\npackage:/data/app/base.apk"))
+        assertNull(ProvisionParsers.parseTargetModel("package:/data/app/base.apk"))
+
+        val hosts = WirelessTargetHelpers.extractSubnet24Hosts("192.168.1.42")
+        assertEquals(253, hosts.size)
+        assertTrue(hosts.contains("192.168.1.1"))
+        assertTrue(hosts.contains("192.168.1.254"))
+        assertTrue(!hosts.contains("192.168.1.42"))
+        assertTrue(WirelessTargetHelpers.extractSubnet24Hosts("127.0.0.1").isEmpty())
     }
 }

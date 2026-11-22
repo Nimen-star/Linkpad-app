@@ -2,6 +2,7 @@ package com.example.bridge
 
 import com.example.protocol.AnalogAxes
 import com.example.protocol.KeymapProfile
+import com.example.protocol.OsInputBridgeMode
 import com.example.protocol.PadButton
 import com.example.protocol.PlayerInputTransition
 import com.example.protocol.PlayerSlotState
@@ -36,6 +37,21 @@ object InputBridgeBus {
     private val _p1AnalogAxes = MutableStateFlow(AnalogAxes())
     val p1AnalogAxes: StateFlow<AnalogAxes> = _p1AnalogAxes.asStateFlow()
 
+    private val _p1ButtonMask = MutableStateFlow(0)
+    val p1ButtonMask: StateFlow<Int> = _p1ButtonMask.asStateFlow()
+
+    private val _p1KeymapProfile = MutableStateFlow(KeymapProfile.GAMEPAD_STANDARD)
+    val p1KeymapProfile: StateFlow<KeymapProfile> = _p1KeymapProfile.asStateFlow()
+
+    private val _accessibilityBridgeActive = MutableStateFlow(false)
+    val accessibilityBridgeActive: StateFlow<Boolean> = _accessibilityBridgeActive.asStateFlow()
+
+    private val _imeBridgeActive = MutableStateFlow(false)
+    val imeBridgeActive: StateFlow<Boolean> = _imeBridgeActive.asStateFlow()
+
+    private val _osInputBridgeMode = MutableStateFlow(OsInputBridgeMode.TV_DPAD_NAV)
+    val osInputBridgeMode: StateFlow<OsInputBridgeMode> = _osInputBridgeMode.asStateFlow()
+
     private val _inputTransitions = MutableSharedFlow<PlayerInputTransition>(
         replay = 0,
         extraBufferCapacity = 128,
@@ -53,6 +69,27 @@ object InputBridgeBus {
         }
     }
 
+    fun updateP1State(mask: Int, keymapProfile: KeymapProfile) {
+        if (_p1ButtonMask.value != mask) {
+            _p1ButtonMask.value = mask
+        }
+        if (_p1KeymapProfile.value != keymapProfile) {
+            _p1KeymapProfile.value = keymapProfile
+        }
+    }
+
+    fun setAccessibilityBridgeActive(active: Boolean) {
+        _accessibilityBridgeActive.value = active
+    }
+
+    fun setImeBridgeActive(active: Boolean) {
+        _imeBridgeActive.value = active
+    }
+
+    fun setOsInputBridgeMode(mode: OsInputBridgeMode) {
+        _osInputBridgeMode.value = mode
+    }
+
     fun setHostActive(active: Boolean, code: String = _pairingCode.value) {
         _hostActive.value = active
         _pairingCode.value = if (active) code else ""
@@ -60,6 +97,7 @@ object InputBridgeBus {
             _packetsPerSecond.value = 0
             _bluetoothHostingActive.value = false
             _p1AnalogAxes.value = AnalogAxes()
+            _p1ButtonMask.value = 0
             _slots.value = defaultSlots()
         }
     }
@@ -82,6 +120,9 @@ object InputBridgeBus {
         newMask: Int,
         keymapProfile: KeymapProfile
     ) {
+        if (slot == 1) {
+            updateP1State(newMask, keymapProfile)
+        }
         val diff = previousMask xor newMask
         if (diff == 0) return
         for (button in PadButton.entries) {

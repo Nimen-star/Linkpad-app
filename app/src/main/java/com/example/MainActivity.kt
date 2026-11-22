@@ -1,10 +1,12 @@
 package com.example
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -21,6 +23,7 @@ import com.example.ui.screens.PcCompanionScreen
 import com.example.ui.screens.RetroControllerScreen
 import com.example.ui.theme.LinkPadTheme
 import com.example.ui.viewmodel.LinkPadViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 
 object Routes {
     const val HOME = "home"
@@ -30,10 +33,20 @@ object Routes {
     const val CONTROLLER = "controller"
 }
 
+data class AutoHostLaunchRequest(
+    val seq: Long,
+    val autoHost: Boolean,
+    val trustClientId: Int
+)
+
 class MainActivity : ComponentActivity() {
+    private var launchSeq = 0L
+    private val launchRequestFlow = MutableStateFlow<AutoHostLaunchRequest?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        consumeAutoHostIntent(intent)
         setContent {
             LinkPadTheme {
                 val navController = rememberNavController()
@@ -46,8 +59,39 @@ class MainActivity : ComponentActivity() {
                 val localIp by viewModel.hostLocalIp.collectAsStateWithLifecycle()
                 val hostSlots by viewModel.hostSlots.collectAsStateWithLifecycle()
                 val hardwareBridgeState by viewModel.hardwareBridgeState.collectAsStateWithLifecycle()
+                val accessibilityBridgeActive by viewModel.accessibilityBridgeActive.collectAsStateWithLifecycle()
+                val imeBridgeActive by viewModel.imeBridgeActive.collectAsStateWithLifecycle()
+                val osInputBridgeMode by viewModel.osInputBridgeMode.collectAsStateWithLifecycle()
+                val remoteAdbBusy by viewModel.remoteAdbBusy.collectAsStateWithLifecycle()
+                val remoteAdbFeedback by viewModel.remoteAdbFeedback.collectAsStateWithLifecycle()
+                val usbAdbTargets by viewModel.usbAdbTargets.collectAsStateWithLifecycle()
+                val wirelessAdbTargets by viewModel.wirelessAdbTargets.collectAsStateWithLifecycle()
+                val wirelessScanning by viewModel.wirelessScanning.collectAsStateWithLifecycle()
+                val provisionState by viewModel.provisionState.collectAsStateWithLifecycle()
                 val discoveredHosts by viewModel.discoveredHosts.collectAsStateWithLifecycle()
                 val clientState by viewModel.clientConnectionState.collectAsStateWithLifecycle()
+                val launchReq by launchRequestFlow.collectAsStateWithLifecycle()
+
+                LaunchedEffect(launchReq?.seq) {
+                    val req = launchReq ?: return@LaunchedEffect
+                    if (req.trustClientId != 0) {
+                        viewModel.trustRemoteClient(req.trustClientId)
+                    }
+                    if (req.autoHost) {
+                        viewModel.startHostSession()
+                        navController.navigate(Routes.HOST) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
+
+                LaunchedEffect(Unit) {
+                    viewModel.navigateToControllerEvent.collect {
+                        navController.navigate(Routes.CONTROLLER) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
 
                 NavHost(
                     navController = navController,
@@ -118,6 +162,10 @@ class MainActivity : ComponentActivity() {
                             pairingCode = pairingCode,
                             localIp = localIp,
                             slots = hostSlots,
+                            environmentStatus = envStatus,
+                            accessibilityBridgeActive = accessibilityBridgeActive,
+                            imeBridgeActive = imeBridgeActive,
+                            osInputBridgeMode = osInputBridgeMode,
                             hardwareBridgeState = hardwareBridgeState,
                             allowFavoritesWithoutCode = settings.allowFavoritesWithoutCode,
                             trustedDeviceCount = settings.trustedClientIds.size,
@@ -137,6 +185,9 @@ class MainActivity : ComponentActivity() {
                             onClearTrustedDevices = {
                                 viewModel.clearTrustedDevices()
                             },
+                            onSelectOsInputBridgeMode = { mode ->
+                                viewModel.setOsInputBridgeMode(mode)
+                            },
                             onRefreshSystemStatus = {
                                 viewModel.refreshSystemStatus()
                             },
@@ -148,6 +199,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onPairWirelessDebugging = { port, code ->
                                 viewModel.pairWirelessDebugging(port, code)
+                            },
+                            onPostWirelessPairNotification = {
+                                viewModel.postWirelessPairShadeNotification()
                             }
                         )
                     }
@@ -175,12 +229,32 @@ class MainActivity : ComponentActivity() {
                             connectionState = clientState,
                             prefillIp = prefillIp,
                             prefillPort = prefillPort,
+                            usbAdbTargets = usbAdbTargets,
+                            wirelessAdbTargets = wirelessAdbTargets,
+                            wirelessScanning = wirelessScanning,
+                            provisionState = provisionState,
+                            remoteAdbBusy = remoteAdbBusy,
+                            remoteAdbFeedback = remoteAdbFeedback,
                             onStartDiscovery = { viewModel.startDiscovery() },
                             onStopDiscovery = { viewModel.stopDiscovery() },
                             onOpenControllerCustomizer = {
                                 navController.navigate("${Routes.CONTROLLER}?preview=true")
                             },
                             onClearError = { viewModel.clearClientError() },
+                            onRefreshUsbTargets = { viewModel.refreshUsbTargets() },
+                            onRescanWirelessTargets = { viewModel.refreshWirelessTargets() },
+                            onSetupUsbDevice = { dev -> viewModel.triggerUsbTargetSetup(dev) },
+                            onStartWifiTargetSetup = { ip, name, port ->
+                                viewModel.startWifiTargetSetup(ip, name, port)
+                            },
+                            onStartWirelessPairAndSetup = { ip, pairPort, pin, connectPort, name ->
+                                viewModel.startWirelessPairAndSetup(ip, pairPort, pin, connectPort, name)
+                            },
+                            onDismissProvisioning = { viewModel.dismissProvisioning() },
+                            onActivateRemoteTvOverWifi = { ip ->
+                                viewModel.activateRemoteTvOverWifi(ip)
+                            },
+                            onClearRemoteAdbFeedback = { viewModel.clearRemoteAdbFeedback() },
                             onConnectHost = { host, code, saveAsFavorite ->
                                 viewModel.connectToHost(host, code, saveAsFavorite) {
                                     navController.navigate(Routes.CONTROLLER)
@@ -265,6 +339,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeAutoHostIntent(intent)
+    }
+
+    private fun consumeAutoHostIntent(intent: Intent?) {
+        intent ?: return
+        val autoHost = intent.getBooleanExtra("linkpad_auto_host", false)
+        val trustId = intent.getIntExtra("linkpad_trust_client_id", 0)
+        if (autoHost || trustId != 0) {
+            launchSeq += 1L
+            launchRequestFlow.value = AutoHostLaunchRequest(
+                seq = launchSeq,
+                autoHost = autoHost,
+                trustClientId = trustId
+            )
+            intent.removeExtra("linkpad_auto_host")
+            intent.removeExtra("linkpad_trust_client_id")
         }
     }
 }

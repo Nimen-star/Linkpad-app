@@ -6,6 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.Process
 import com.example.transport.LinkPadConstants
+import io.github.muntashirakon.adb.AdbStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -43,8 +46,11 @@ sealed class UhidBridgeState {
 }
 
 /**
- * Manages the in-app loopback ADB connection and privileged UID 2000 [UhidHostAgent] pipeline
- * inside the unified LinkPad APK with zero external helper apps (no Shizuku) and zero root.
+ * Manages the in-app ADB connection and privileged UID 2000 [UhidHostAgent] pipeline.
+ * Supports:
+ * 1) Local wlan0 IP or 127.0.0.1 ADB port 5555 (Fire TV / Android TV)
+ * 2) Android 11+ Wireless Debugging TLS pairing & connect
+ * 3) Remote activation from a Controller Phone -> TV LAN IP:5555 (bypasses FireOS localhost blocks)
  */
 class LinkPadHardwareBridge(private val context: Context) {
 
@@ -57,13 +63,16 @@ class LinkPadHardwareBridge(private val context: Context) {
     @Volatile
     private var adbManager: LinkPadAdbConnectionManager? = null
     @Volatile
+    private var agentShellStream: AdbStream? = null
+    private var agentOutputJob: Job? = null
+
+    @Volatile
     private var pipeSocket: DatagramSocket? = null
     @Volatile
     private var pipeAddr: InetAddress? = null
     private val pipeSeq = AtomicInteger(0)
 
     private var heartbeatJob: Job? = null
-    private var mDnsPairJob: Job? = null
     private var nsdManager: NsdManager? = null
     private var pairDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var connectDiscoveryListener: NsdManager.DiscoveryListener? = null
@@ -84,20 +93,72 @@ class LinkPadHardwareBridge(private val context: Context) {
                 startHeartbeatLoop()
                 return@launch
             }
-            val tcpOpen = isLoopbackPortOpen(5555)
-            val wirelessReady = discoveredConnectPort != null || discoveredPairPort != null
+            val tcpOpen = findReachableAdb5555Host() != null
             if (tcpOpen) {
-                // Attempt zero-click connect if trust was previously granted
                 activateInternal(allowWaitPrompt = false)
             } else {
-                _state.value = buildSetupRequiredState(tcpOpen = false, wirelessReady = wirelessReady)
+                _state.value = buildSetupRequiredState(
+                    tcpOpen = false,
+                    wirelessReady = discoveredConnectPort != null || discoveredPairPort != null
+                )
             }
         }
+    }
+
+    suspend fun quickPingAttach() {
+        val current = _state.value
+        if (current is UhidBridgeState.Active ||
+            current is UhidBridgeState.StartingAgent ||
+            current is UhidBridgeState.Checking ||
+            current is UhidBridgeState.WaitingTrustPrompt
+        ) {
+            return
+        }
+        val alive = pingAgent() ?: return
+        ensurePipeSocket()
+        _state.value = UhidBridgeState.Active(alive.first, alive.second)
+        startHeartbeatLoop()
     }
 
     fun activateHardwareGamepads() {
         scope.launch {
             activateInternal(allowWaitPrompt = true)
+        }
+    }
+
+    fun currentDiscoveredPairPort(): Int? = discoveredPairPort
+
+    /**
+     * Allows a Controller Phone on the same Wi-Fi network to launch [UhidHostAgent] on a Host TV
+     * when the TV's firmware (e.g. Fire OS 7/8) blocks self-loopback 127.0.0.1 ADB connections.
+     */
+    suspend fun activateRemoteHostOverWifi(targetIp: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanIp = targetIp.trim()
+            require(cleanIp.isNotEmpty()) { "Missing TV IP address" }
+            val mgr = getOrCreateAdbManager()
+            val ok = runCatching { mgr.connect(cleanIp, 5555) }.getOrDefault(false)
+            if (!ok) {
+                error("Could not connect to $cleanIp:5555. Enable ADB Debugging on your TV and approve the prompt.")
+            }
+            val pkg = appContext.packageName
+            val cmd = "APK=\$(pm path $pkg | tr -d '\\r' | head -n1 | cut -d: -f2); " +
+                "if command -v setsid >/dev/null 2>&1; then " +
+                "setsid sh -c \"CLASSPATH=\\\"\$APK\\\" /system/bin/app_process / com.example.uhid.UhidHostAgent --persistent\" </dev/null >/dev/null 2>&1 & " +
+                "else " +
+                "nohup env CLASSPATH=\"\$APK\" /system/bin/app_process / com.example.uhid.UhidHostAgent --persistent </dev/null >/dev/null 2>&1 & " +
+                "fi; echo REMOTE_LAUNCHED"
+            val stream = mgr.openStream("shell:$cmd")
+            val reader = BufferedReader(InputStreamReader(stream.openInputStream()))
+            val line = reader.readLine().orEmpty()
+            delay(500L)
+            runCatching { stream.close() }
+            runCatching { mgr.disconnect() }
+            if (line.contains("REMOTE_LAUNCHED")) {
+                "Launched persistent UHID engine on $cleanIp"
+            } else {
+                "Sent remote hardware trigger to $cleanIp"
+            }
         }
     }
 
@@ -121,7 +182,7 @@ class LinkPadHardwareBridge(private val context: Context) {
                     _state.value = UhidBridgeState.Error("Wireless Debugging pairing failed. Double-check the port & 6-digit PIN.")
                     return@launch
                 }
-                delay(400L)
+                delay(450L)
                 activateInternal(allowWaitPrompt = true)
             } catch (t: Throwable) {
                 _state.value = UhidBridgeState.Error(t.message ?: "Wireless Debugging pairing failed.")
@@ -164,6 +225,8 @@ class LinkPadHardwareBridge(private val context: Context) {
     fun shutdownAgent() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        agentOutputJob?.cancel()
+        agentOutputJob = null
         stopMdnsAdbDiscovery()
         scope.launch {
             runCatching {
@@ -174,6 +237,8 @@ class LinkPadHardwareBridge(private val context: Context) {
                     sock.send(DatagramPacket(stopBytes, stopBytes.size, addr, LinkPadConstants.UHID_AGENT_UDP_PORT))
                 }
             }
+            runCatching { agentShellStream?.close() }
+            agentShellStream = null
             runCatching { pipeSocket?.close() }
             pipeSocket = null
             runCatching { adbManager?.disconnect() }
@@ -194,37 +259,29 @@ class LinkPadHardwareBridge(private val context: Context) {
         val mgr = try {
             getOrCreateAdbManager()
         } catch (t: Throwable) {
-            _state.value = UhidBridgeState.Error("ADB identity error: ${t.message}")
+            _state.value = UhidBridgeState.Error("ADB key error: ${t.message}")
             return
         }
 
-        val tcpOpen = isLoopbackPortOpen(5555)
+        val adbHost = findReachableAdb5555Host()
         var connected = false
-        var authWaiting = false
+        var authRejected = false
 
-        if (tcpOpen) {
+        if (adbHost != null) {
             if (allowWaitPrompt) {
                 _state.value = UhidBridgeState.WaitingTrustPrompt
             }
-            connected = runCatching { mgr.connect("127.0.0.1", 5555) }
-                .recoverCatching {
-                    val localIp = LinkPadConstants.findPrimaryLocalIpv4(appContext)
-                    if (localIp != "127.0.0.1") mgr.connect(localIp, 5555) else false
-                }
-                .onFailure {
-                    authWaiting = true
-                }
+            connected = runCatching { mgr.connect(adbHost, 5555) }
+                .onFailure { authRejected = true }
                 .getOrDefault(false)
         }
 
         if (!connected && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val tlsPort = discoveredConnectPort
+            val localIp = findPreferredLocalConnectHost()
             if (tlsPort != null) {
-                connected = runCatching { mgr.connect("127.0.0.1", tlsPort) }
-                    .recoverCatching {
-                        val localIp = LinkPadConstants.findPrimaryLocalIpv4(appContext)
-                        mgr.connect(localIp, tlsPort)
-                    }
+                connected = runCatching { mgr.connect(localIp, tlsPort) }
+                    .recoverCatching { mgr.connect("127.0.0.1", tlsPort) }
                     .getOrDefault(false)
             }
             if (!connected) {
@@ -233,26 +290,27 @@ class LinkPadHardwareBridge(private val context: Context) {
         }
 
         if (!connected) {
-            _state.value = if (authWaiting && allowWaitPrompt) {
-                UhidBridgeState.Error("Approve 'Allow ADB debugging' on screen, then tap Retry Enable.")
+            _state.value = if (authRejected && allowWaitPrompt) {
+                UhidBridgeState.Error(
+                    "ADB authorization did not complete. Tap 'Always allow' on the system popup or use Zero-ADB Accessibility/Keyboard mode above."
+                )
             } else {
                 buildSetupRequiredState(
-                    tcpOpen = tcpOpen,
+                    tcpOpen = adbHost != null,
                     wirelessReady = discoveredConnectPort != null || discoveredPairPort != null
                 )
             }
             return
         }
 
-        // Launch UhidHostAgent directly out of LinkPad's own installed APK under UID 2000
-        val launched = launchUhidAgentOverAdb(mgr)
-        if (!launched) {
-            _state.value = UhidBridgeState.Error("Could not launch UHID agent over ADB shell.")
+        val launchError = launchAndAwaitUhidAgent(mgr)
+        if (launchError != null) {
+            _state.value = UhidBridgeState.Error(launchError)
             return
         }
 
         var agentPong: Pair<UhidBackendType, Int>? = null
-        for (attempt in 0 until 12) {
+        for (attempt in 0 until 15) {
             delay(180L)
             agentPong = pingAgent()
             if (agentPong != null) break
@@ -264,25 +322,77 @@ class LinkPadHardwareBridge(private val context: Context) {
             startHeartbeatLoop()
         } else {
             _state.value = UhidBridgeState.Error(
-                "UHID agent did not respond. Enable USB/Wireless debugging security simulation if present in Developer Options, or use LinkPad IME below."
+                "UHID kernel driver blocked or unreachable on this firmware. Use the Zero-ADB Touch/TV Accessibility or Virtual Keyboard modes above."
             )
         }
     }
 
-    private fun launchUhidAgentOverAdb(mgr: LinkPadAdbConnectionManager): Boolean {
+    /**
+     * Launches UhidHostAgent inside the kept-open ADB shell stream (no premature stream.close() SIGHUP!)
+     * and inspects stdout for immediate diagnostic confirmation or errors.
+     */
+    private suspend fun launchAndAwaitUhidAgent(mgr: LinkPadAdbConnectionManager): String? {
         return try {
+            agentOutputJob?.cancel()
+            runCatching { agentShellStream?.close() }
+            agentShellStream = null
+
             val pkg = appContext.packageName
             val pid = Process.myPid()
-            val cmd = "APK=\$(pm path $pkg | head -n1 | cut -d: -f2); " +
-                "nohup env CLASSPATH=\"\$APK\" /system/bin/app_process / com.example.uhid.UhidHostAgent --parent-pid=$pid >/dev/null 2>&1 &"
+            val cmd = "APK=\$(pm path $pkg | tr -d '\\r' | head -n1 | cut -d: -f2); " +
+                "if [ -z \"\$APK\" ]; then echo LINKPAD_AGENT_ERROR:APK_NOT_FOUND; exit 1; fi; " +
+                "CLASSPATH=\"\$APK\" exec /system/bin/app_process / com.example.uhid.UhidHostAgent --parent-pid=$pid"
+
             val stream = mgr.openStream("shell:$cmd")
-            runCatching {
-                Thread.sleep(150L)
-                stream.close()
+            agentShellStream = stream
+            val reader = BufferedReader(InputStreamReader(stream.openInputStream()))
+
+            var firstError: String? = null
+            var sawReady = false
+
+            // Wait briefly for initial status line before moving reader to background
+            val startMs = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startMs < 1_800L) {
+                if (reader.ready()) {
+                    val line = reader.readLine()?.trim() ?: break
+                    if (line.startsWith("LINKPAD_AGENT_READY:")) {
+                        sawReady = true
+                        break
+                    }
+                    if (line.startsWith("LINKPAD_AGENT_ERROR:")) {
+                        firstError = "Hardware ID blocked by kernel/SELinux (${line.substringAfter(":")}). Use Zero-ADB Accessibility or Keyboard mode above."
+                        break
+                    }
+                }
+                if (pingAgent() != null) {
+                    sawReady = true
+                    break
+                }
+                delay(80L)
             }
-            true
-        } catch (_: Throwable) {
-            false
+
+            if (firstError != null) {
+                runCatching { stream.close() }
+                agentShellStream = null
+                return firstError
+            }
+
+            // Keep ADB stream drained asynchronously so shell stays alive without blocking buffer
+            agentOutputJob = scope.launch {
+                runCatching {
+                    while (isActive) {
+                        val line = reader.readLine() ?: break
+                        if (line.startsWith("LINKPAD_AGENT_ERROR:") && _state.value !is UhidBridgeState.Active) {
+                            _state.value = UhidBridgeState.Error(
+                                "Hardware ID blocked (${line.substringAfter(":")}). Use Zero-ADB Accessibility or Keyboard mode."
+                            )
+                        }
+                    }
+                }
+            }
+            if (!sawReady) null else null
+        } catch (t: Throwable) {
+            "ADB shell launch failed: ${t.message ?: "unknown error"}"
         }
     }
 
@@ -295,7 +405,7 @@ class LinkPadHardwareBridge(private val context: Context) {
                 if (pong != null) {
                     _state.value = UhidBridgeState.Active(pong.first, pong.second)
                 } else {
-                    val tcpOpen = isLoopbackPortOpen(5555)
+                    val tcpOpen = findReachableAdb5555Host() != null
                     _state.value = buildSetupRequiredState(
                         tcpOpen = tcpOpen,
                         wirelessReady = discoveredConnectPort != null || discoveredPairPort != null
@@ -323,26 +433,33 @@ class LinkPadHardwareBridge(private val context: Context) {
         }
     }
 
-    private fun isLoopbackPortOpen(port: Int): Boolean {
-        return try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress("127.0.0.1", port), 200)
-                true
+    private fun findReachableAdb5555Host(): String? {
+        val candidates = linkedSetOf("127.0.0.1")
+        val primary = LinkPadConstants.findPrimaryLocalIpv4(appContext)
+        if (primary != "127.0.0.1") candidates.add(primary)
+        candidates.addAll(LinkPadConstants.findAllLocalIpv4s())
+
+        for (host in candidates) {
+            val open = try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(host, 5555), 220)
+                    true
+                }
+            } catch (_: Throwable) {
+                false
             }
-        } catch (_: Throwable) {
-            false
+            if (open) return host
         }
+        return null
     }
 
     private fun buildSetupRequiredState(tcpOpen: Boolean, wirelessReady: Boolean): UhidBridgeState.SetupRequired {
         val guidance = when {
-            tcpOpen -> "Local ADB port 5555 detected. Tap Enable Hardware Gamepads and allow the prompt on screen."
+            tcpOpen -> "Local ADB port 5555 detected. Tap Enable Hardware ID and accept the prompt."
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && wirelessReady ->
-                "Wireless Debugging detected on device. Tap Pair Wireless Debugging and enter the 6-digit code."
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-                "On Fire TV / Android TV: Settings -> Developer Options -> Turn ON ADB Debugging. On Android 11+ Phones: turn ON Wireless Debugging."
+                "Wireless Debugging detected on device. Tap Pair Wireless Debugging and enter the 6-digit PIN."
             else ->
-                "On Fire TV / Android TV: Settings -> Developer Options -> Turn ON ADB Debugging, then tap Retry."
+                "If your Fire TV or Phone blocks local ADB (common on Fire OS 7/8 & unrooted phones), use the Zero-ADB Accessibility or Keyboard modes above — or tap 'Remote Activate TV' from your connected phone."
         }
         return UhidBridgeState.SetupRequired(
             tcp5555Open = tcpOpen,
@@ -395,6 +512,13 @@ class LinkPadHardwareBridge(private val context: Context) {
                                 } else {
                                     discoveredConnectPort = info.port
                                 }
+                                val current = _state.value
+                                if (current is UhidBridgeState.SetupRequired) {
+                                    _state.value = buildSetupRequiredState(
+                                        tcpOpen = current.tcp5555Open,
+                                        wirelessReady = discoveredConnectPort != null || discoveredPairPort != null
+                                    )
+                                }
                             }
                         })
                     }
@@ -415,8 +539,6 @@ class LinkPadHardwareBridge(private val context: Context) {
     }
 
     private fun stopMdnsAdbDiscovery() {
-        mDnsPairJob?.cancel()
-        mDnsPairJob = null
         val mgr = nsdManager ?: return
         pairDiscoveryListener?.let { runCatching { mgr.stopServiceDiscovery(it) } }
         connectDiscoveryListener?.let { runCatching { mgr.stopServiceDiscovery(it) } }
